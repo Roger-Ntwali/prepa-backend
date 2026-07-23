@@ -1,0 +1,17 @@
+version: "3.8"
+services:
+  db:
+    image: postgres:16
+    container_name: prepa_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: prepa_user
+      POSTGRES_PASSWORD: prepa_pass
+      POSTGRES_DB: prepa_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - prepa_pgdata:/var/lib/postgresql/data
+
+volumes:
+  prepa_pgdata:
