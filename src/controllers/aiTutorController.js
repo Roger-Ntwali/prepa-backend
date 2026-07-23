@@ -1,10 +1,13 @@
 const pool = require('../config/db');
-const { callGemini } = require('../utils/gemini');
+const { callGemini, PLAIN_TEXT_STYLE_RULES } = require('../utils/gemini');
 
 const SYSTEM_PROMPT = `You are the PREPA AI Tutor, helping Rwandan Senior 3 students prepare
 for the REB O-Level Biology national exam. Explain concepts clearly and simply,
 use REB curriculum terminology, keep answers focused and exam-relevant, and
-end with a short follow-up practice question when appropriate.`;
+end with a short follow-up practice question when appropriate. Explain in a
+bilingual Kinyarwanda/English style, as already established with students.
+
+${PLAIN_TEXT_STYLE_RULES}`;
 
 async function ask(req, res) {
   // The app sends { question, topic_id, history }; earlier testing used
@@ -21,7 +24,7 @@ async function ask(req, res) {
 
     const responseText = await callGemini(
       `${SYSTEM_PROMPT}${historyText}\n\nStudent's question: ${userMessage}`,
-      { maxOutputTokens: 2000 }
+      { maxOutputTokens: 2000, temperature: 0.4 }
     );
 
     await pool.query(
