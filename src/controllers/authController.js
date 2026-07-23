@@ -11,10 +11,17 @@ function signToken(user) {
 }
 
 async function register(req, res) {
-  const { full_name, role, email, username, password, school_id, class_level } = req.body;
+  // The app's registration form sends { name, email, password, role, level,
+  // school_name }. `full_name`/`class_level` are the real column names;
+  // accept both. `school_id` is a real foreign key to the schools table —
+  // the app has no way to supply a valid one yet, so school_name (a plain
+  // string) is intentionally not mapped to it to avoid a type/FK error.
+  const { full_name, name, role, email, username, password, school_id, class_level, level } = req.body;
+  const fullName = full_name || name;
+  const classLevel = class_level || level;
 
-  if (!full_name || !role || !password || (!email && !username)) {
-    return res.status(400).json({ error: 'full_name, role, password, and email or username are required' });
+  if (!fullName || !role || !password || (!email && !username)) {
+    return res.status(400).json({ error: 'name, role, password, and email or username are required' });
   }
   if (!['student', 'teacher', 'admin'].includes(role)) {
     return res.status(400).json({ error: 'role must be student, teacher, or admin' });
@@ -29,7 +36,7 @@ async function register(req, res) {
       `INSERT INTO users (full_name, role, email, username, password_hash, school_id, class_level, is_active)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        RETURNING id, full_name, role, email, username, school_id, class_level, is_active, created_at`,
-      [full_name, role, email || null, username || null, password_hash, school_id || null, class_level || null, isActive]
+      [fullName, role, email || null, username || null, password_hash, school_id || null, classLevel || null, isActive]
     );
     const user = rows[0];
     if (!user.is_active) {
