@@ -7,7 +7,7 @@ preparation platform (O-Level Biology, APACE Secondary School pilot).
 
 ```bash
 npm install
-cp .env.example .env        # then edit JWT_SECRET, ANTHROPIC_API_KEY, etc.
+cp .env.example .env        # then edit JWT_SECRET, GEMINI_API_KEY, etc.
 
 # Start Postgres (requires Docker)
 docker compose up -d

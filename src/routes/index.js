@@ -14,6 +14,7 @@ const reportsController = require('../controllers/reportsController');
 const pastPapersController = require('../controllers/pastPapersController');
 const upload = require('../middleware/upload');
 const pdfImportController = require('../controllers/pdfImportController');
+const { authLimiter, aiTutorLimiter, aiAuthoringLimiter } = require('../middleware/rateLimit');
 
 // Health check
 router.get('/health', (req, res) => res.json({ status: 'ok', time: new Date().toISOString() }));
@@ -27,6 +28,7 @@ router.post('/sync/push', requireAuth, syncController.push);
 router.get('/past-papers', requireAuth, pastPapersController.listPastPapers);
 router.post('/past-papers', requireAuth, requireRole('admin'), pastPapersController.createPastPaper);
 router.delete('/past-papers/:id', requireAuth, requireRole('admin'), pastPapersController.deletePastPaper);
+router.get('/past-papers/:id/download-url', requireAuth, pastPapersController.getDownloadUrl);
 
 // User management — admin only (approve/reject teacher accounts).
 router.get('/users/pending-teachers', requireAuth, requireRole('admin'), usersController.listPendingTeachers);
@@ -40,8 +42,8 @@ router.get('/reports/class-summary', requireAuth, requireRole('teacher', 'admin'
 router.get('/reports/students/:id', requireAuth, requireRole('teacher', 'admin'), reportsController.studentDetail);
 
 // Auth
-router.post('/auth/register', authController.register);
-router.post('/auth/login', authController.login);
+router.post('/auth/register', authLimiter, authController.register);
+router.post('/auth/login', authLimiter, authController.login);
 
 // Topics
 router.get('/topics', requireAuth, topicsController.listTopics);
@@ -50,11 +52,11 @@ router.post('/topics', requireAuth, requireRole('teacher', 'admin'), topicsContr
 // Questions
 router.get('/questions', requireAuth, questionsController.listQuestions);
 router.get('/questions/export', requireAuth, questionsController.exportBank); // offline bulk sync
-router.post('/questions/generate', requireAuth, requireRole('teacher', 'admin'), questionsController.generateAnswer);
+router.post('/questions/generate', requireAuth, requireRole('teacher', 'admin'), aiAuthoringLimiter, questionsController.generateAnswer);
 router.post('/questions', requireAuth, requireRole('teacher', 'admin'), questionsController.createQuestion);
 // Teacher/admin uploads a PDF; AI extracts questions and converts them into
 // the app's MCQ format, straight into the question bank.
-router.post('/questions/import-pdf', requireAuth, requireRole('teacher', 'admin'), upload.single('file'), pdfImportController.importPdf);
+router.post('/questions/import-pdf', requireAuth, requireRole('teacher', 'admin'), aiAuthoringLimiter, upload.single('file'), pdfImportController.importPdf);
 // Removal is archive-or-delete depending on whether students have answered
 // the question — the controller decides. See questionsController.
 router.delete('/questions/:id', requireAuth, requireRole('teacher', 'admin'), questionsController.deleteQuestion);
@@ -71,10 +73,11 @@ router.delete('/quizzes/:id', requireAuth, requireRole('teacher', 'admin'), quiz
 router.post('/attempts/sync', requireAuth, requireRole('student'), attemptsController.syncAttempts);
 router.get('/attempts/mine', requireAuth, requireRole('student'), attemptsController.myAttempts);
 
-// AI Tutor (online-only)
-router.post('/ai-tutor/ask', requireAuth, requireRole('student'), aiTutorController.ask);
+// AI Tutor (online-only). 20/hour/student matches the limit the mobile
+// client's own doc comments already assume (lib/repositories/ai_tutor_repository.dart).
+router.post('/ai-tutor/ask', requireAuth, requireRole('student'), aiTutorLimiter, aiTutorController.ask);
 // The mobile app's ApiClient actually calls this path — keep both so
 // nothing that already depends on /ai-tutor/ask breaks.
-router.post('/ai/tutor', requireAuth, requireRole('student'), aiTutorController.ask);
+router.post('/ai/tutor', requireAuth, requireRole('student'), aiTutorLimiter, aiTutorController.ask);
 
 module.exports = router;

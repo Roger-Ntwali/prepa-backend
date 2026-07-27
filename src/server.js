@@ -5,6 +5,7 @@ const helmet = require('helmet');
 const morgan = require('morgan');
 const path = require('path');
 const routes = require('./routes');
+const verifyUploadSignature = require('./middleware/verifyUploadSignature');
 
 const app = express();
 
@@ -27,8 +28,12 @@ app.use(express.json());
 app.use(morgan('dev'));
 
 // Serves uploaded past-paper PDFs (and any other static assets) directly —
-// e.g. a file at uploads/foo.pdf is reachable at /uploads/foo.pdf.
-app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads')));
+// e.g. a file at uploads/foo.pdf is reachable at /uploads/foo.pdf. Every
+// request needs a short-lived signature (see verifyUploadSignature) minted
+// by GET /api/v1/past-papers/:id/download-url — this route itself accepts
+// no session/bearer auth, since browsers and external PDF viewers navigate
+// here directly and never attach an Authorization header.
+app.use('/uploads', verifyUploadSignature, express.static(path.join(__dirname, '..', 'uploads')));
 
 app.use('/api/v1', routes);
 
