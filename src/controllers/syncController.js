@@ -83,12 +83,103 @@ async function pull(req, res) {
   res.json({ deltas, server_timestamp: new Date().toISOString() });
 }
 
-// Attempts already sync through the dedicated /attempts/sync endpoint, so
-// this is a harmless no-op — it just means the app's push-then-pull cycle
-// never fails on this half of the round trip.
+// The mobile app's SyncService calls this, not /attempts/sync -- Attempt
+// records are one answered question each (see lib/models/attempt.dart's
+// toPushJson: id, question_id, quiz_id?, student_answer, is_correct,
+// time_spent_seconds?, attempted_at), not a nested quiz-session shape.
+// This used to be a no-op stub, meaning every attempt the shipped app
+// ever pushed was silently discarded -- reports/class-summary and every
+// student's recent-attempts history were built on zero real data.
+//
+// attempt_answers.attempt_id is required by the existing reports (they
+// INNER JOIN through quiz_attempts to get topic/quiz context), so pushed
+// answers are grouped by quiz_id and each group becomes one quiz_attempts
+// "sitting" -- the closest thing to a session boundary this client shape
+// has, since it sends no separate session id of its own.
 async function push(req, res) {
+  const studentId = req.user.id;
+  const deviceId = req.body?.device_id || null;
   const attempts = req.body?.attempts;
-  res.json({ ok: true, received: Array.isArray(attempts) ? attempts.length : 0 });
+
+  if (!Array.isArray(attempts) || !attempts.length) {
+    return res.json({ ok: true, received: 0, persisted: 0 });
+  }
+
+  const groups = new Map();
+  for (const a of attempts) {
+    if (!a || !a.question_id) continue; // can't record an answer with no question
+    const key = a.quiz_id || '';
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(a);
+  }
+
+  const client = await pool.connect();
+  let persisted = 0;
+  try {
+    await client.query('BEGIN');
+
+    for (const [key, group] of groups) {
+      const quizId = key || null;
+      const times = group.map((a) => a.attempted_at).filter(Boolean).sort();
+      const startedAt = times[0] || null;
+      const completedAt = times[times.length - 1] || null;
+
+      const { rows: attemptRows } = await client.query(
+        `INSERT INTO quiz_attempts (quiz_id, student_id, device_id, started_at, completed_at, synced_at)
+         VALUES ($1, $2, $3, $4, $5, now())
+         RETURNING id`,
+        [quizId, studentId, deviceId, startedAt, completedAt]
+      );
+      const attemptRowId = attemptRows[0].id;
+
+      let insertedInGroup = 0;
+      for (const a of group) {
+        const { rowCount } = await client.query(
+          `INSERT INTO attempt_answers (id, attempt_id, question_id, selected_answer, is_correct, time_spent_seconds, created_at)
+           VALUES (COALESCE($1, gen_random_uuid()), $2, $3, $4, $5, $6, COALESCE($7, now()))
+           ON CONFLICT (id) DO NOTHING`,
+          [
+            a.id || null,
+            attemptRowId,
+            a.question_id,
+            a.student_answer || null,
+            a.is_correct ?? null,
+            a.time_spent_seconds || null,
+            a.attempted_at || null,
+          ]
+        );
+        insertedInGroup += rowCount;
+      }
+
+      if (insertedInGroup === 0) {
+        // Every answer in this group was already stored by an earlier,
+        // successful push that never got acknowledged back to the client
+        // -- this "sitting" carries no new data, so drop it rather than
+        // double-count a session that produced nothing new.
+        await client.query('DELETE FROM quiz_attempts WHERE id = $1', [attemptRowId]);
+        continue;
+      }
+
+      const correct = group.filter((a) => a.is_correct).length;
+      const score = Math.round((correct / group.length) * 100);
+      await client.query('UPDATE quiz_attempts SET score = $1 WHERE id = $2', [score, attemptRowId]);
+      persisted += insertedInGroup;
+    }
+
+    await client.query(
+      `INSERT INTO sync_log (user_id, device_id, sync_type, status) VALUES ($1,$2,'quiz_attempts','success')`,
+      [studentId, deviceId]
+    );
+
+    await client.query('COMMIT');
+    res.json({ ok: true, received: attempts.length, persisted });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('sync/push failed:', err);
+    res.status(500).json({ error: 'Sync failed' });
+  } finally {
+    client.release();
+  }
 }
 
 module.exports = { pull, push };
