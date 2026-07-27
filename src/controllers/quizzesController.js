@@ -54,16 +54,21 @@ async function listQuizzes(req, res) {
 
 async function getQuiz(req, res) {
   const { id } = req.params;
-  const quizRes = await pool.query('SELECT * FROM quizzes WHERE id = $1', [id]);
-  if (!quizRes.rows.length) return res.status(404).json({ error: 'Quiz not found' });
+  try {
+    const quizRes = await pool.query('SELECT * FROM quizzes WHERE id = $1', [id]);
+    if (!quizRes.rows.length) return res.status(404).json({ error: 'Quiz not found' });
 
-  const questionsRes = await pool.query(
-    `SELECT q.*, qq.order_index FROM quiz_questions qq
-     JOIN questions q ON q.id = qq.question_id
-     WHERE qq.quiz_id = $1 ORDER BY qq.order_index ASC`,
-    [id]
-  );
-  res.json({ ...quizRes.rows[0], questions: questionsRes.rows.map(toAppShape) });
+    const questionsRes = await pool.query(
+      `SELECT q.*, qq.order_index FROM quiz_questions qq
+       JOIN questions q ON q.id = qq.question_id
+       WHERE qq.quiz_id = $1 ORDER BY qq.order_index ASC`,
+      [id]
+    );
+    res.json({ ...quizRes.rows[0], questions: questionsRes.rows.map(toAppShape) });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to load quiz' });
+  }
 }
 
 // Adaptive practice: pick questions weighted toward topics/difficulties
@@ -80,37 +85,42 @@ async function adaptiveSet(req, res) {
     limit = Math.min(150, Math.max(5, 5 + durationMinutes * 3));
   }
 
-  const { rows: weakTopics } = await pool.query(
-    `SELECT q.topic_id, COUNT(*) AS misses
-     FROM attempt_answers aa
-     JOIN questions q ON q.id = aa.question_id
-     JOIN quiz_attempts a ON a.id = aa.attempt_id
-     WHERE a.student_id = $1 AND aa.is_correct = false
-     GROUP BY q.topic_id
-     ORDER BY misses DESC
-     LIMIT 3`,
-    [studentId]
-  );
+  try {
+    const { rows: weakTopics } = await pool.query(
+      `SELECT q.topic_id, COUNT(*) AS misses
+       FROM attempt_answers aa
+       JOIN questions q ON q.id = aa.question_id
+       JOIN quiz_attempts a ON a.id = aa.attempt_id
+       WHERE a.student_id = $1 AND aa.is_correct = false
+       GROUP BY q.topic_id
+       ORDER BY misses DESC
+       LIMIT 3`,
+      [studentId]
+    );
 
-  let questions;
-  if (weakTopics.length) {
-    const topicIds = weakTopics.map(r => r.topic_id);
-    const { rows } = await pool.query(
-      `SELECT * FROM questions
-       WHERE topic_id = ANY($1::uuid[]) AND archived_at IS NULL
-       ORDER BY random() LIMIT $2`,
-      [topicIds, limit]
-    );
-    questions = rows;
-  } else {
-    const { rows } = await pool.query(
-      `SELECT * FROM questions WHERE archived_at IS NULL
-       ORDER BY random() LIMIT $1`,
-      [limit]
-    );
-    questions = rows;
+    let questions;
+    if (weakTopics.length) {
+      const topicIds = weakTopics.map(r => r.topic_id);
+      const { rows } = await pool.query(
+        `SELECT * FROM questions
+         WHERE topic_id = ANY($1::uuid[]) AND archived_at IS NULL
+         ORDER BY random() LIMIT $2`,
+        [topicIds, limit]
+      );
+      questions = rows;
+    } else {
+      const { rows } = await pool.query(
+        `SELECT * FROM questions WHERE archived_at IS NULL
+         ORDER BY random() LIMIT $1`,
+        [limit]
+      );
+      questions = rows;
+    }
+    res.json({ generated_at: new Date().toISOString(), questions: questions.map(toAppShape) });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to generate adaptive set' });
   }
-  res.json({ generated_at: new Date().toISOString(), questions: questions.map(toAppShape) });
 }
 
 // quiz_attempts.quiz_id is ON DELETE SET NULL, so deleting a quiz students

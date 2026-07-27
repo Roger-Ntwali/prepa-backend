@@ -15,6 +15,8 @@ const pastPapersController = require('../controllers/pastPapersController');
 const upload = require('../middleware/upload');
 const pdfImportController = require('../controllers/pdfImportController');
 const { authLimiter, aiTutorLimiter, aiAuthoringLimiter } = require('../middleware/rateLimit');
+const { validate } = require('../middleware/validate');
+const v = require('../middleware/validators');
 
 // Health check
 router.get('/health', (req, res) => res.json({ status: 'ok', time: new Date().toISOString() }));
@@ -26,51 +28,53 @@ router.post('/sync/push', requireAuth, syncController.push);
 // Past papers — anyone signed in can view/download; only admin can add one
 // (teachers can add questions and quizzes, but not upload exam papers).
 router.get('/past-papers', requireAuth, pastPapersController.listPastPapers);
-router.post('/past-papers', requireAuth, requireRole('admin'), pastPapersController.createPastPaper);
-router.delete('/past-papers/:id', requireAuth, requireRole('admin'), pastPapersController.deletePastPaper);
-router.get('/past-papers/:id/download-url', requireAuth, pastPapersController.getDownloadUrl);
+router.post('/past-papers', requireAuth, requireRole('admin'), v.createPastPaper, validate, pastPapersController.createPastPaper);
+router.delete('/past-papers/:id', requireAuth, requireRole('admin'), v.idParam, validate, pastPapersController.deletePastPaper);
+router.get('/past-papers/:id/download-url', requireAuth, v.idParam, validate, pastPapersController.getDownloadUrl);
 
 // User management — admin only (approve/reject teacher accounts).
 router.get('/users/pending-teachers', requireAuth, requireRole('admin'), usersController.listPendingTeachers);
-router.patch('/users/:id/approve', requireAuth, requireRole('admin'), usersController.approveTeacher);
-router.delete('/users/:id/reject', requireAuth, requireRole('admin'), usersController.rejectTeacher);
+router.patch('/users/:id/approve', requireAuth, requireRole('admin'), v.idParam, validate, usersController.approveTeacher);
+router.delete('/users/:id/reject', requireAuth, requireRole('admin'), v.idParam, validate, usersController.rejectTeacher);
 // Student list/overview — admin and teacher both need this for the dashboard.
 router.get('/users/students', requireAuth, requireRole('teacher', 'admin'), usersController.listStudents);
 
 // Reports — per-student performance detail, for admin + teacher dashboard.
 router.get('/reports/class-summary', requireAuth, requireRole('teacher', 'admin'), reportsController.classSummary);
-router.get('/reports/students/:id', requireAuth, requireRole('teacher', 'admin'), reportsController.studentDetail);
+router.get('/reports/students/:id', requireAuth, requireRole('teacher', 'admin'), v.idParam, validate, reportsController.studentDetail);
 
 // Auth
-router.post('/auth/register', authLimiter, authController.register);
-router.post('/auth/login', authLimiter, authController.login);
+router.post('/auth/register', authLimiter, v.register, validate, authController.register);
+router.post('/auth/login', authLimiter, v.login, validate, authController.login);
 
 // Topics
 router.get('/topics', requireAuth, topicsController.listTopics);
-router.post('/topics', requireAuth, requireRole('teacher', 'admin'), topicsController.createTopic);
+router.post('/topics', requireAuth, requireRole('teacher', 'admin'), v.createTopic, validate, topicsController.createTopic);
 
 // Questions
-router.get('/questions', requireAuth, questionsController.listQuestions);
+router.get('/questions', requireAuth, v.listQuestionsQuery, validate, questionsController.listQuestions);
 router.get('/questions/export', requireAuth, questionsController.exportBank); // offline bulk sync
-router.post('/questions/generate', requireAuth, requireRole('teacher', 'admin'), aiAuthoringLimiter, questionsController.generateAnswer);
-router.post('/questions', requireAuth, requireRole('teacher', 'admin'), questionsController.createQuestion);
+router.post('/questions/generate', requireAuth, requireRole('teacher', 'admin'), aiAuthoringLimiter, v.generateAnswer, validate, questionsController.generateAnswer);
+router.post('/questions', requireAuth, requireRole('teacher', 'admin'), v.createQuestion, validate, questionsController.createQuestion);
 // Teacher/admin uploads a PDF; AI extracts questions and converts them into
-// the app's MCQ format, straight into the question bank.
-router.post('/questions/import-pdf', requireAuth, requireRole('teacher', 'admin'), aiAuthoringLimiter, upload.single('file'), pdfImportController.importPdf);
+// the app's MCQ format, straight into the question bank. multer must run
+// before the validator here -- it's what parses paper_title/paper_year
+// out of the multipart body in the first place.
+router.post('/questions/import-pdf', requireAuth, requireRole('teacher', 'admin'), aiAuthoringLimiter, upload.single('file'), v.importPdfMeta, validate, pdfImportController.importPdf);
 // Removal is archive-or-delete depending on whether students have answered
 // the question — the controller decides. See questionsController.
-router.delete('/questions/:id', requireAuth, requireRole('teacher', 'admin'), questionsController.deleteQuestion);
-router.patch('/questions/:id/restore', requireAuth, requireRole('teacher', 'admin'), questionsController.restoreQuestion);
+router.delete('/questions/:id', requireAuth, requireRole('teacher', 'admin'), v.idParam, validate, questionsController.deleteQuestion);
+router.patch('/questions/:id/restore', requireAuth, requireRole('teacher', 'admin'), v.idParam, validate, questionsController.restoreQuestion);
 
 // Quizzes
 router.get('/quizzes', requireAuth, quizzesController.listQuizzes);
-router.post('/quizzes', requireAuth, requireRole('teacher', 'admin'), quizzesController.createQuiz);
-router.get('/quizzes/:id', requireAuth, quizzesController.getQuiz);
+router.post('/quizzes', requireAuth, requireRole('teacher', 'admin'), v.createQuiz, validate, quizzesController.createQuiz);
+router.get('/quizzes/:id', requireAuth, v.idParam, validate, quizzesController.getQuiz);
 router.get('/quizzes/practice/adaptive', requireAuth, requireRole('student'), quizzesController.adaptiveSet);
-router.delete('/quizzes/:id', requireAuth, requireRole('teacher', 'admin'), quizzesController.deleteQuiz);
+router.delete('/quizzes/:id', requireAuth, requireRole('teacher', 'admin'), v.idParam, validate, quizzesController.deleteQuiz);
 
 // Attempts (offline sync)
-router.post('/attempts/sync', requireAuth, requireRole('student'), attemptsController.syncAttempts);
+router.post('/attempts/sync', requireAuth, requireRole('student'), v.syncAttempts, validate, attemptsController.syncAttempts);
 router.get('/attempts/mine', requireAuth, requireRole('student'), attemptsController.myAttempts);
 
 // AI Tutor (online-only). 20/hour/student matches the limit the mobile

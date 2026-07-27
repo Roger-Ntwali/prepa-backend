@@ -130,16 +130,27 @@ async function createQuestion(req, res) {
     return res.status(400).json({ error: 'question_text and correct_answer are required' });
   }
 
-  const { rows } = await pool.query(
-    `INSERT INTO questions
-      (topic_id, past_paper_id, question_text, question_type, options, correct_answer, explanation, difficulty, created_by)
-     VALUES ($1,$2,$3,COALESCE($4,'mcq'),$5,$6,$7,COALESCE($8,2),$9)
-     RETURNING *`,
-    [topic_id || null, past_paper_id || null, question_text, question_type,
-     options ? JSON.stringify(options) : null, correct_answer, explanation || null,
-     difficulty, req.user.id]
-  );
-  res.status(201).json(rows[0]);
+  try {
+    // COALESCE($4,'mcq') alone errors ("column is of type question_type
+    // but expression is of type text") when $4 is omitted -- an untyped
+    // null parameter next to an enum literal doesn't get the column's
+    // type inferred for it, and Postgres refuses the implicit cast. The
+    // request had no try/catch here either, so that error previously left
+    // the connection open with no response ever sent back to the caller.
+    const { rows } = await pool.query(
+      `INSERT INTO questions
+        (topic_id, past_paper_id, question_text, question_type, options, correct_answer, explanation, difficulty, created_by)
+       VALUES ($1,$2,$3,$4::question_type,$5,$6,$7,COALESCE($8,2),$9)
+       RETURNING *`,
+      [topic_id || null, past_paper_id || null, question_text, question_type || 'mcq',
+       options ? JSON.stringify(options) : null, correct_answer, explanation || null,
+       difficulty, req.user.id]
+    );
+    res.status(201).json(rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to create question' });
+  }
 }
 
 // Bulk export endpoint: lets the mobile app pull the full offline-cacheable
