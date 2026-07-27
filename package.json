@@ -7,7 +7,9 @@
     "start": "node --dns-result-order=ipv6first src/server.js",
     "dev": "nodemon --exec \"node --dns-result-order=ipv6first\" src/server.js",
     "migrate": "node --dns-result-order=ipv6first db/migrate.js",
-    "seed": "node --dns-result-order=ipv6first db/seed.js"
+    "seed": "node --dns-result-order=ipv6first db/seed.js",
+    "pretest": "cross-env DATABASE_URL=postgres://prepa_user:prepa_pass@localhost:5432/prepa_test node db/migrate.js",
+    "test": "jest --runInBand"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
@@ -23,7 +25,10 @@
     "pg": "^8.12.0"
   },
   "devDependencies": {
-    "nodemon": "^3.1.4"
+    "cross-env": "^10.1.0",
+    "jest": "^30.4.2",
+    "nodemon": "^3.1.4",
+    "supertest": "^7.2.2"
   },
   "engines": {
     "node": ">=18"
