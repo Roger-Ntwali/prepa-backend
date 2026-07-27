@@ -15,7 +15,7 @@
 // Sending a PDF this way lets Gemini read it directly (including scanned/
 // image-based pages) instead of relying on a text-extraction library that
 // only works on PDFs with a proper embedded text layer.
-async function callGemini(content, { maxOutputTokens = 4096 } = {}) {
+async function callGemini(content, { maxOutputTokens = 4096, temperature } = {}) {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     const err = new Error('GEMINI_API_KEY is not set in .env');
@@ -24,6 +24,9 @@ async function callGemini(content, { maxOutputTokens = 4096 } = {}) {
   }
   const model = process.env.GEMINI_MODEL || 'gemini-flash-latest';
   const parts = typeof content === 'string' ? [{ text: content }] : content;
+
+  const generationConfig = { maxOutputTokens };
+  if (temperature !== undefined) generationConfig.temperature = temperature;
 
   const res = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
@@ -36,7 +39,7 @@ async function callGemini(content, { maxOutputTokens = 4096 } = {}) {
         // outright (400 invalid argument), others use part of the budget
         // for hidden reasoning. A generous maxOutputTokens covers both
         // cases without needing to know which model this alias resolves to.
-        generationConfig: { maxOutputTokens },
+        generationConfig,
       }),
     }
   );
@@ -62,4 +65,20 @@ async function callGemini(content, { maxOutputTokens = 4096 } = {}) {
   return text;
 }
 
-module.exports = { callGemini };
+// Shared formatting rule for every AI Tutor call (chat answers, generated
+// practice questions, concept explanations, etc.) — the app's chat bubble
+// UI renders plain text only, so markdown syntax shows up as literal
+// asterisks/hashes/pipes instead of actual formatting. Centralized here
+// so every prompt that builds on top of the tutor persona gets it for
+// free instead of repeating it per call site.
+const PLAIN_TEXT_STYLE_RULES = `Formatting rules — follow exactly:
+- Plain text only. Never use markdown: no **bold**, no ### headings, no bullet
+  dashes, no numbered-list symbols, no | table bars, no backticks.
+- No filler: skip greetings, "let me know if you need more help", or any
+  closing remark. Start directly with the answer and end when it's done.
+- Write in short paragraphs (2-4 sentences each), never a single wall of text
+  — this is read in a small mobile chat bubble.
+- If listing multiple items, write them as short plain sentences separated by
+  line breaks, not bullet/numbered markdown.`;
+
+module.exports = { callGemini, PLAIN_TEXT_STYLE_RULES };
