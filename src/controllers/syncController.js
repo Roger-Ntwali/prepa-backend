@@ -12,27 +12,63 @@ const { toAppShape } = require('../utils/questionShape');
 
 const SUBJECT_ID = 'biology-subject';
 
-async function fetchAllTables() {
+// `since` (a Date, or null for a full pull) filters every table on
+// updated_at -- populated by a trigger on each table, see migration
+// 003_delta_sync.sql. Archived rows still just drop out of the result
+// entirely rather than being flagged for client-side removal: the app
+// does a full pull once at every login anyway (initialFullSync), so a
+// row archived between two delta pulls self-corrects on next login.
+// True tombstone propagation (telling an already-synced client to
+// remove something mid-session) is a larger feature, deliberately not
+// built here.
+async function fetchAllTables(since) {
+  const topicsSql = since
+    ? 'SELECT * FROM topics WHERE updated_at > $1 ORDER BY order_index ASC'
+    : 'SELECT * FROM topics ORDER BY order_index ASC';
+  const questionsSql = since
+    ? 'SELECT * FROM questions WHERE archived_at IS NULL AND updated_at > $1'
+    : 'SELECT * FROM questions WHERE archived_at IS NULL';
+  const quizzesSql = since
+    ? 'SELECT * FROM quizzes WHERE is_adaptive = false AND archived_at IS NULL AND updated_at > $1'
+    : 'SELECT * FROM quizzes WHERE is_adaptive = false AND archived_at IS NULL';
+  const quizQuestionsSql = since
+    ? 'SELECT * FROM quiz_questions WHERE updated_at > $1'
+    : 'SELECT * FROM quiz_questions';
+  const papersSql = since
+    ? 'SELECT * FROM past_papers WHERE archived_at IS NULL AND updated_at > $1'
+    : 'SELECT * FROM past_papers WHERE archived_at IS NULL';
+
+  const params = since ? [since] : [];
   return Promise.all([
-    pool.query('SELECT * FROM topics ORDER BY order_index ASC'),
-    pool.query('SELECT * FROM questions WHERE archived_at IS NULL'),
-    pool.query('SELECT * FROM quizzes WHERE is_adaptive = false AND archived_at IS NULL'),
-    pool.query('SELECT * FROM quiz_questions'),
-    pool.query('SELECT * FROM past_papers WHERE archived_at IS NULL'),
+    pool.query(topicsSql, params),
+    pool.query(questionsSql, params),
+    pool.query(quizzesSql, params),
+    pool.query(quizQuestionsSql, params),
+    pool.query(papersSql, params),
   ]);
 }
 
 async function pull(req, res) {
+  const rawSince = req.query.last_sync;
+  let since = null;
+  if (rawSince) {
+    const parsed = new Date(rawSince);
+    if (Number.isNaN(parsed.getTime())) {
+      return res.status(400).json({ error: 'last_sync must be a valid timestamp' });
+    }
+    since = parsed;
+  }
+
   let topicsRes, questionsRes, quizzesRes, quizQuestionsRes, papersRes;
   try {
     // Neon's pooled connections occasionally drop mid-query (ECONNRESET);
     // since this is a pure read, one retry is safe and clears up almost
     // every transient case without the caller needing to know.
-    [topicsRes, questionsRes, quizzesRes, quizQuestionsRes, papersRes] = await fetchAllTables();
+    [topicsRes, questionsRes, quizzesRes, quizQuestionsRes, papersRes] = await fetchAllTables(since);
   } catch (firstErr) {
     console.error('sync/pull first attempt failed, retrying once:', firstErr.message);
     try {
-      [topicsRes, questionsRes, quizzesRes, quizQuestionsRes, papersRes] = await fetchAllTables();
+      [topicsRes, questionsRes, quizzesRes, quizQuestionsRes, papersRes] = await fetchAllTables(since);
     } catch (secondErr) {
       console.error('sync/pull failed after retry:', secondErr);
       return res.status(503).json({ error: 'Sync temporarily unavailable — please try again.' });
