@@ -28,7 +28,10 @@ router.post('/sync/push', requireAuth, syncController.push);
 // Past papers — anyone signed in can view/download; only admin can add one
 // (teachers can add questions and quizzes, but not upload exam papers).
 router.get('/past-papers', requireAuth, pastPapersController.listPastPapers);
-router.post('/past-papers', requireAuth, requireRole('admin'), v.createPastPaper, validate, pastPapersController.createPastPaper);
+// multer runs before the validator, same reasoning as import-pdf below --
+// it's what parses title/year/term/topic_id out of the multipart body
+// when a file is attached.
+router.post('/past-papers', requireAuth, requireRole('admin'), upload.single('file'), v.createPastPaper, validate, pastPapersController.createPastPaper);
 router.delete('/past-papers/:id', requireAuth, requireRole('admin'), v.idParam, validate, pastPapersController.deletePastPaper);
 router.get('/past-papers/:id/download-url', requireAuth, v.idParam, validate, pastPapersController.getDownloadUrl);
 

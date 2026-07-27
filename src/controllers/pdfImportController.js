@@ -13,6 +13,7 @@
 // ones with a clean embedded text layer.
 const pool = require('../config/db');
 const { callGemini } = require('../utils/gemini');
+const { saveUploadedPdf } = require('../utils/savedUpload');
 
 function buildPrompt(topics) {
   const topicList = topics.map((t) => `- "${t.title}"`).join('\n');
@@ -104,12 +105,17 @@ async function importPdf(req, res) {
 
     // Optionally file everything under one past_paper record so students
     // see where these questions came from (e.g. "Mock Exam — March 2026").
+    // The uploaded PDF itself is saved here too -- previously this only
+    // ever reached Gemini as an in-memory buffer and was discarded
+    // afterward, so a paper registered this way had no file a student
+    // could actually open, only the questions extracted from it.
     let pastPaperId = null;
     if (paper_title) {
+      const fileUrl = await saveUploadedPdf(req.file, { title: paper_title });
       const { rows } = await pool.query(
-        `INSERT INTO past_papers (title, year, topic_id, uploaded_by)
-         VALUES ($1, $2, NULL, $3) RETURNING id`,
-        [paper_title, paper_year ? parseInt(paper_year, 10) : null, req.user.id]
+        `INSERT INTO past_papers (title, year, topic_id, file_url, uploaded_by)
+         VALUES ($1, $2, NULL, $3, $4) RETURNING id`,
+        [paper_title, paper_year ? parseInt(paper_year, 10) : null, fileUrl, req.user.id]
       );
       pastPaperId = rows[0].id;
     }
