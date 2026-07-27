@@ -45,7 +45,7 @@ async function listQuizzes(req, res) {
      FROM quizzes z
      LEFT JOIN topics t ON t.id = z.topic_id
      LEFT JOIN quiz_questions qq ON qq.quiz_id = z.id
-     WHERE z.is_adaptive = false
+     WHERE z.is_adaptive = false AND z.archived_at IS NULL
      GROUP BY z.id, t.title
      ORDER BY z.created_at DESC`
   );
@@ -96,14 +96,16 @@ async function adaptiveSet(req, res) {
   if (weakTopics.length) {
     const topicIds = weakTopics.map(r => r.topic_id);
     const { rows } = await pool.query(
-      `SELECT * FROM questions WHERE topic_id = ANY($1::uuid[])
+      `SELECT * FROM questions
+       WHERE topic_id = ANY($1::uuid[]) AND archived_at IS NULL
        ORDER BY random() LIMIT $2`,
       [topicIds, limit]
     );
     questions = rows;
   } else {
     const { rows } = await pool.query(
-      `SELECT * FROM questions ORDER BY random() LIMIT $1`,
+      `SELECT * FROM questions WHERE archived_at IS NULL
+       ORDER BY random() LIMIT $1`,
       [limit]
     );
     questions = rows;
@@ -111,4 +113,36 @@ async function adaptiveSet(req, res) {
   res.json({ generated_at: new Date().toISOString(), questions: questions.map(toAppShape) });
 }
 
-module.exports = { createQuiz, getQuiz, adaptiveSet, listQuizzes };
+// quiz_attempts.quiz_id is ON DELETE SET NULL, so deleting a quiz students
+// have taken would orphan their attempts — the scores survive but stop
+// naming which quiz produced them, which makes a student's history
+// unreadable. Archive in that case; hard-delete only an untaken quiz.
+async function deleteQuiz(req, res) {
+  const { id } = req.params;
+
+  const existing = await pool.query('SELECT id FROM quizzes WHERE id = $1', [id]);
+  if (!existing.rows.length) {
+    return res.status(404).json({ error: 'Quiz not found' });
+  }
+
+  const taken = await pool.query(
+    'SELECT 1 FROM quiz_attempts WHERE quiz_id = $1 LIMIT 1',
+    [id]
+  );
+
+  if (taken.rows.length) {
+    await pool.query('UPDATE quizzes SET archived_at = now() WHERE id = $1', [id]);
+    return res.json({
+      id,
+      action: 'archived',
+      message:
+        'Students have already taken this quiz, so it was archived instead of deleted. It is gone from the quiz list and the app, and their results still show which quiz they sat.',
+    });
+  }
+
+  // quiz_questions rows cascade with the quiz.
+  await pool.query('DELETE FROM quizzes WHERE id = $1', [id]);
+  res.json({ id, action: 'deleted', message: 'Quiz deleted.' });
+}
+
+module.exports = { createQuiz, getQuiz, adaptiveSet, listQuizzes, deleteQuiz };

@@ -26,6 +26,7 @@ router.post('/sync/push', requireAuth, syncController.push);
 // (teachers can add questions and quizzes, but not upload exam papers).
 router.get('/past-papers', requireAuth, pastPapersController.listPastPapers);
 router.post('/past-papers', requireAuth, requireRole('admin'), pastPapersController.createPastPaper);
+router.delete('/past-papers/:id', requireAuth, requireRole('admin'), pastPapersController.deletePastPaper);
 
 // User management — admin only (approve/reject teacher accounts).
 router.get('/users/pending-teachers', requireAuth, requireRole('admin'), usersController.listPendingTeachers);
@@ -35,6 +36,7 @@ router.delete('/users/:id/reject', requireAuth, requireRole('admin'), usersContr
 router.get('/users/students', requireAuth, requireRole('teacher', 'admin'), usersController.listStudents);
 
 // Reports — per-student performance detail, for admin + teacher dashboard.
+router.get('/reports/class-summary', requireAuth, requireRole('teacher', 'admin'), reportsController.classSummary);
 router.get('/reports/students/:id', requireAuth, requireRole('teacher', 'admin'), reportsController.studentDetail);
 
 // Auth
@@ -53,12 +55,17 @@ router.post('/questions', requireAuth, requireRole('teacher', 'admin'), question
 // Teacher/admin uploads a PDF; AI extracts questions and converts them into
 // the app's MCQ format, straight into the question bank.
 router.post('/questions/import-pdf', requireAuth, requireRole('teacher', 'admin'), upload.single('file'), pdfImportController.importPdf);
+// Removal is archive-or-delete depending on whether students have answered
+// the question — the controller decides. See questionsController.
+router.delete('/questions/:id', requireAuth, requireRole('teacher', 'admin'), questionsController.deleteQuestion);
+router.patch('/questions/:id/restore', requireAuth, requireRole('teacher', 'admin'), questionsController.restoreQuestion);
 
 // Quizzes
 router.get('/quizzes', requireAuth, quizzesController.listQuizzes);
 router.post('/quizzes', requireAuth, requireRole('teacher', 'admin'), quizzesController.createQuiz);
 router.get('/quizzes/:id', requireAuth, quizzesController.getQuiz);
 router.get('/quizzes/practice/adaptive', requireAuth, requireRole('student'), quizzesController.adaptiveSet);
+router.delete('/quizzes/:id', requireAuth, requireRole('teacher', 'admin'), quizzesController.deleteQuiz);
 
 // Attempts (offline sync)
 router.post('/attempts/sync', requireAuth, requireRole('student'), attemptsController.syncAttempts);

@@ -1,8 +1,14 @@
 const pool = require('../config/db');
 
 async function listTopics(req, res) {
+  // question_count comes along for the ride so the portal's Topics page
+  // doesn't have to download the entire question bank just to tally it.
   const { rows } = await pool.query(
-    'SELECT * FROM topics ORDER BY order_index ASC, title ASC'
+    `SELECT t.*, COUNT(q.id)::int AS question_count
+     FROM topics t
+     LEFT JOIN questions q ON q.topic_id = t.id AND q.archived_at IS NULL
+     GROUP BY t.id
+     ORDER BY t.order_index ASC, t.title ASC`
   );
   res.json(rows);
 }

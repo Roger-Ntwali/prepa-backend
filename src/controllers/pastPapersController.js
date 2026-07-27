@@ -3,7 +3,7 @@ const pool = require('../config/db');
 async function listPastPapers(req, res) {
   const { rows } = await pool.query(
     `SELECT id, title, year, term, topic_id, file_url, created_at
-     FROM past_papers ORDER BY year DESC`
+     FROM past_papers WHERE archived_at IS NULL ORDER BY year DESC`
   );
   res.json({ past_papers: rows });
 }
@@ -27,4 +27,35 @@ async function createPastPaper(req, res) {
   res.status(201).json({ past_paper: rows[0] });
 }
 
-module.exports = { listPastPapers, createPastPaper };
+// questions.past_paper_id is ON DELETE SET NULL, so removing a paper never
+// destroys the questions imported from it — they just stop pointing back at
+// it. Archive when questions still reference the paper, so that link
+// survives; hard-delete when nothing does.
+async function deletePastPaper(req, res) {
+  const { id } = req.params;
+
+  const existing = await pool.query('SELECT id FROM past_papers WHERE id = $1', [id]);
+  if (!existing.rows.length) {
+    return res.status(404).json({ error: 'Past paper not found' });
+  }
+
+  const linked = await pool.query(
+    'SELECT COUNT(*)::int AS n FROM questions WHERE past_paper_id = $1',
+    [id]
+  );
+  const count = linked.rows[0].n;
+
+  if (count > 0) {
+    await pool.query('UPDATE past_papers SET archived_at = now() WHERE id = $1', [id]);
+    return res.json({
+      id,
+      action: 'archived',
+      message: `This paper was archived rather than deleted because ${count} question${count === 1 ? '' : 's'} in the bank came from it. Those questions are untouched.`,
+    });
+  }
+
+  await pool.query('DELETE FROM past_papers WHERE id = $1', [id]);
+  res.json({ id, action: 'deleted', message: 'Past paper removed.' });
+}
+
+module.exports = { listPastPapers, createPastPaper, deletePastPaper };

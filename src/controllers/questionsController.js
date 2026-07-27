@@ -53,9 +53,11 @@ Keep options short, plausible, and at O-Level difficulty. Make exactly one optio
 }
 
 async function listQuestions(req, res) {
-  const { topic_id, past_paper_id } = req.query;
+  const { topic_id, past_paper_id, include_archived } = req.query;
   const params = [];
-  const clauses = [];
+  // Archived questions stay out of every listing unless explicitly asked
+  // for, so the student app and the portal never serve a retired question.
+  const clauses = include_archived === 'true' ? [] : ['archived_at IS NULL'];
   if (topic_id) { params.push(topic_id); clauses.push(`topic_id = $${params.length}`); }
   if (past_paper_id) { params.push(past_paper_id); clauses.push(`past_paper_id = $${params.length}`); }
   let sql = 'SELECT * FROM questions';
@@ -63,6 +65,59 @@ async function listQuestions(req, res) {
   sql += ' ORDER BY created_at DESC';
   const { rows } = await pool.query(sql, params);
   res.json(rows.map(toAppShape));
+}
+
+// Removing a question is not a plain DELETE. attempt_answers.question_id is
+// ON DELETE CASCADE, so dropping a question students have answered would
+// take those answers with it and silently rewrite past scores and every
+// topic-accuracy figure built on them.
+//
+// So: if the question has been answered, archive it — it vanishes from the
+// bank and from the app, while the history it underpins stays intact. If
+// nobody has ever answered it, there is nothing to preserve and it is
+// deleted outright.
+async function deleteQuestion(req, res) {
+  const { id } = req.params;
+
+  const existing = await pool.query(
+    'SELECT id, archived_at FROM questions WHERE id = $1',
+    [id]
+  );
+  if (!existing.rows.length) {
+    return res.status(404).json({ error: 'Question not found' });
+  }
+
+  const answered = await pool.query(
+    'SELECT 1 FROM attempt_answers WHERE question_id = $1 LIMIT 1',
+    [id]
+  );
+
+  if (answered.rows.length) {
+    await pool.query(
+      'UPDATE questions SET archived_at = now() WHERE id = $1',
+      [id]
+    );
+    return res.json({
+      id,
+      action: 'archived',
+      message:
+        'Students have already answered this question, so it was archived instead of deleted. It no longer appears in the bank, in quizzes, or in the app, and past results are unchanged.',
+    });
+  }
+
+  // quiz_questions cascades on its own; nothing else references the row.
+  await pool.query('DELETE FROM questions WHERE id = $1', [id]);
+  res.json({ id, action: 'deleted', message: 'Question deleted.' });
+}
+
+async function restoreQuestion(req, res) {
+  const { id } = req.params;
+  const { rows } = await pool.query(
+    'UPDATE questions SET archived_at = NULL WHERE id = $1 RETURNING id',
+    [id]
+  );
+  if (!rows.length) return res.status(404).json({ error: 'Question not found' });
+  res.json({ id, action: 'restored', message: 'Question restored to the bank.' });
 }
 
 async function createQuestion(req, res) {
@@ -94,10 +149,14 @@ async function exportBank(req, res) {
     `SELECT q.*, t.title AS topic_title
      FROM questions q
      LEFT JOIN topics t ON t.id = q.topic_id
+     WHERE q.archived_at IS NULL
      ORDER BY t.order_index ASC, q.created_at ASC`
   );
   const questions = rows.map((r) => ({ ...toAppShape(r), topic_title: r.topic_title }));
   res.json({ exported_at: new Date().toISOString(), count: questions.length, questions });
 }
 
-module.exports = { listQuestions, createQuestion, exportBank, generateAnswer };
+module.exports = {
+  listQuestions, createQuestion, exportBank, generateAnswer,
+  deleteQuestion, restoreQuestion,
+};

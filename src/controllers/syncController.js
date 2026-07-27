@@ -15,10 +15,10 @@ const SUBJECT_ID = 'biology-subject';
 async function fetchAllTables() {
   return Promise.all([
     pool.query('SELECT * FROM topics ORDER BY order_index ASC'),
-    pool.query('SELECT * FROM questions'),
-    pool.query('SELECT * FROM quizzes WHERE is_adaptive = false'),
+    pool.query('SELECT * FROM questions WHERE archived_at IS NULL'),
+    pool.query('SELECT * FROM quizzes WHERE is_adaptive = false AND archived_at IS NULL'),
     pool.query('SELECT * FROM quiz_questions'),
-    pool.query('SELECT * FROM past_papers'),
+    pool.query('SELECT * FROM past_papers WHERE archived_at IS NULL'),
   ]);
 }
 
