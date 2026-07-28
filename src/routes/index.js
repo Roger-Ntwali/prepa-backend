@@ -12,6 +12,7 @@ const syncController = require('../controllers/syncController');
 const usersController = require('../controllers/usersController');
 const reportsController = require('../controllers/reportsController');
 const pastPapersController = require('../controllers/pastPapersController');
+const healthController = require('../controllers/healthController');
 const upload = require('../middleware/upload');
 const pdfImportController = require('../controllers/pdfImportController');
 const { authLimiter, aiTutorLimiter, aiAuthoringLimiter } = require('../middleware/rateLimit');
@@ -20,6 +21,9 @@ const v = require('../middleware/validators');
 
 // Health check
 router.get('/health', (req, res) => res.json({ status: 'ok', time: new Date().toISOString() }));
+// Same as /health, but actually queries Postgres and reports row counts --
+// use this to confirm DATABASE_URL is pointed at the right database.
+router.get('/health/db', healthController.checkDb);
 
 // Sync (offline-first full pull/push — the app calls this right after login)
 router.get('/sync/pull', requireAuth, syncController.pull);
