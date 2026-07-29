@@ -38,4 +38,16 @@ const aiAuthoringLimiter = rateLimit({
   message: { error: 'You have reached the hourly limit for AI-assisted authoring. Try again later.' },
 });
 
-module.exports = { authLimiter, aiTutorLimiter, aiAuthoringLimiter };
+// Stricter than authLimiter: every hit here that matches a real account
+// sends an actual email (Resend quota/cost), and this is exactly the kind
+// of endpoint someone could otherwise abuse to spam a stranger's inbox
+// with reset codes, not just brute-force a password.
+const forgotPasswordLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many attempts. Please wait a few minutes and try again.' },
+});
+
+module.exports = { authLimiter, aiTutorLimiter, aiAuthoringLimiter, forgotPasswordLimiter };

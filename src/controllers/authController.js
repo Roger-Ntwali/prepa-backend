@@ -1,6 +1,8 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
 const pool = require('../config/db');
+const { sendResetCodeEmail } = require('../utils/mailer');
 
 function signToken(user) {
   return jwt.sign(
@@ -88,8 +90,38 @@ async function login(req, res) {
   }
 }
 
-// Public (no session exists yet -- that's the whole point). Exchanges an
-// admin-issued reset code for a new password. Matches on
+// Public, self-service, works for any role. Never reveals whether `email`
+// belongs to an account, or whether the email actually sent -- the
+// response is identical in every case (found/not found, mailer configured
+// or not, Resend API up or down). Rate-limited more strictly than
+// login/register (see forgotPasswordLimiter): unlike those, a hit here
+// that matches a real account costs an actual email send, so this is the
+// one endpoint worth protecting against being used to spam a stranger.
+async function forgotPassword(req, res) {
+  const { email } = req.body;
+  try {
+    const { rows } = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
+    const user = rows[0];
+    if (user) {
+      const code = crypto.randomInt(100000, 1000000).toString();
+      await pool.query(
+        `UPDATE users SET reset_code = $1, reset_code_expires_at = now() + interval '15 minutes'
+         WHERE id = $2`,
+        [code, user.id]
+      );
+      // Failures are logged inside sendResetCodeEmail and never thrown --
+      // this response must look identical whether or not the send worked.
+      await sendResetCodeEmail(email, code);
+    }
+  } catch (err) {
+    console.error(err);
+    // Still fall through to the same generic response below.
+  }
+  res.json({ ok: true, message: 'If that email exists, a reset code has been sent to it.' });
+}
+
+// Public (no session exists yet -- that's the whole point). Exchanges a
+// reset code for a new password. Matches on
 // email + reset_code + an unexpired reset_code_expires_at all at once, so
 // a wrong code and an expired code get the same clear, non-revealing
 // error rather than leaking which part failed.
@@ -104,7 +136,7 @@ async function resetPasswordWithCode(req, res) {
     const user = rows[0];
     if (!user) {
       return res.status(400).json({
-        error: 'That code is invalid or has expired. Ask your administrator for a new one.',
+        error: 'That code is invalid or has expired. Request a new one.',
       });
     }
 
@@ -121,4 +153,4 @@ async function resetPasswordWithCode(req, res) {
   }
 }
 
-module.exports = { register, login, resetPasswordWithCode };
+module.exports = { register, login, forgotPassword, resetPasswordWithCode };
