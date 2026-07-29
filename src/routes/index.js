@@ -53,6 +53,7 @@ router.post('/auth/login', authLimiter, v.login, validate, authController.login)
 // Topics
 router.get('/topics', requireAuth, topicsController.listTopics);
 router.post('/topics', requireAuth, requireRole('teacher', 'admin'), v.createTopic, validate, topicsController.createTopic);
+router.patch('/topics/:id', requireAuth, requireRole('teacher', 'admin'), v.idParam, v.updateTopic, validate, topicsController.updateTopic);
 
 // Questions
 router.get('/questions', requireAuth, v.listQuestionsQuery, validate, questionsController.listQuestions);
@@ -64,6 +65,12 @@ router.post('/questions', requireAuth, requireRole('teacher', 'admin'), v.create
 // before the validator here -- it's what parses paper_title/paper_year
 // out of the multipart body in the first place.
 router.post('/questions/import-pdf', requireAuth, requireRole('teacher', 'admin'), aiAuthoringLimiter, upload.single('file'), v.importPdfMeta, validate, pdfImportController.importPdf);
+// Single-question raw fetch, for the portal's edit form to pre-fill from
+// (see questionsController.getQuestion for why this differs from the list
+// endpoint's shape). Teacher/admin only, like the rest of the authoring
+// surface -- not something the student app or a public reader needs.
+router.get('/questions/:id', requireAuth, requireRole('teacher', 'admin'), v.idParam, validate, questionsController.getQuestion);
+router.patch('/questions/:id', requireAuth, requireRole('teacher', 'admin'), v.idParam, v.updateQuestion, validate, questionsController.updateQuestion);
 // Removal is archive-or-delete depending on whether students have answered
 // the question — the controller decides. See questionsController.
 router.delete('/questions/:id', requireAuth, requireRole('teacher', 'admin'), v.idParam, validate, questionsController.deleteQuestion);
@@ -73,6 +80,7 @@ router.patch('/questions/:id/restore', requireAuth, requireRole('teacher', 'admi
 router.get('/quizzes', requireAuth, quizzesController.listQuizzes);
 router.post('/quizzes', requireAuth, requireRole('teacher', 'admin'), v.createQuiz, validate, quizzesController.createQuiz);
 router.get('/quizzes/:id', requireAuth, v.idParam, validate, quizzesController.getQuiz);
+router.patch('/quizzes/:id', requireAuth, requireRole('teacher', 'admin'), v.idParam, v.updateQuiz, validate, quizzesController.updateQuiz);
 router.get('/quizzes/practice/adaptive', requireAuth, requireRole('student'), quizzesController.adaptiveSet);
 router.delete('/quizzes/:id', requireAuth, requireRole('teacher', 'admin'), v.idParam, validate, quizzesController.deleteQuiz);
 
