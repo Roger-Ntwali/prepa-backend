@@ -31,4 +31,23 @@ async function createTopic(req, res) {
   res.status(201).json(rows[0]);
 }
 
-module.exports = { listTopics, createTopic };
+// No answered-history concern here -- unlike a question's correct_answer,
+// nothing about a topic retroactively changes whether any past answer
+// was right.
+async function updateTopic(req, res) {
+  const { id } = req.params;
+  const { title, description, level, order_index } = req.body;
+  if (!title) return res.status(400).json({ error: 'title is required' });
+
+  const { rows } = await pool.query(
+    `UPDATE topics SET title = $1, description = $2, level = COALESCE($3, level),
+       order_index = COALESCE($4, order_index)
+     WHERE id = $5
+     RETURNING *`,
+    [title, description || null, level, order_index, id]
+  );
+  if (!rows.length) return res.status(404).json({ error: 'Topic not found' });
+  res.json(rows[0]);
+}
+
+module.exports = { listTopics, createTopic, updateTopic };

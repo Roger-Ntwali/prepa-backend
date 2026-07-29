@@ -34,6 +34,23 @@ async function createQuiz(req, res) {
   }
 }
 
+// Title/topic only -- which questions a quiz contains isn't editable here
+// (that would mean diffing/rewriting quiz_questions, out of scope for
+// this pass). No answered-history concern: unlike a question's correct
+// answer, a quiz's title/topic don't change what any past attempt scored.
+async function updateQuiz(req, res) {
+  const { id } = req.params;
+  const { title, topic_id } = req.body;
+  if (!title) return res.status(400).json({ error: 'title is required' });
+
+  const { rows } = await pool.query(
+    `UPDATE quizzes SET title = $1, topic_id = $2 WHERE id = $3 RETURNING *`,
+    [title, topic_id || null, id]
+  );
+  if (!rows.length) return res.status(404).json({ error: 'Quiz not found' });
+  res.json(rows[0]);
+}
+
 // Lets students browse quizzes a teacher has put together (title +
 // which topic it covers + how many questions) before opening one.
 // Adaptive/auto-generated sets aren't listed here since they're
@@ -155,4 +172,4 @@ async function deleteQuiz(req, res) {
   res.json({ id, action: 'deleted', message: 'Quiz deleted.' });
 }
 
-module.exports = { createQuiz, getQuiz, adaptiveSet, listQuizzes, deleteQuiz };
+module.exports = { createQuiz, getQuiz, updateQuiz, adaptiveSet, listQuizzes, deleteQuiz };

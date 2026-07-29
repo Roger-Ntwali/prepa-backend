@@ -131,3 +131,179 @@ describe('GET /api/v1/questions', () => {
     expect(res.body.find((r) => r.id === q.id)).toBeUndefined();
   });
 });
+
+describe('GET /api/v1/questions/:id', () => {
+  async function createQuestion() {
+    const { rows: [q] } = await pool.query(
+      `INSERT INTO questions (topic_id, question_text, question_type, options, correct_answer, difficulty, created_by)
+       VALUES ($1,'Raw fetch me?','mcq','{"A":"Option A","B":"Option B"}','A',2,$2) RETURNING *`,
+      [fixtures.topic.id, fixtures.teacher.id]
+    );
+    return q;
+  }
+
+  it('returns the raw storage shape (lettered options, answer_count) rather than the app-shaped list format', async () => {
+    const q = await createQuestion();
+    const res = await request(app)
+      .get(`/api/v1/questions/${q.id}`)
+      .set('Authorization', `Bearer ${fixtures.teacher.token}`);
+    expect(res.status).toBe(200);
+    expect(res.body.options).toEqual({ A: 'Option A', B: 'Option B' });
+    expect(res.body.correct_answer).toBe('A');
+    expect(res.body.answer_count).toBe(0);
+  });
+
+  it('reports a nonzero answer_count once a student has answered it', async () => {
+    const q = await createQuestion();
+    const { rows: [attempt] } = await pool.query(
+      `INSERT INTO quiz_attempts (student_id, completed_at, score) VALUES ($1, now(), 100) RETURNING id`,
+      [fixtures.student.id]
+    );
+    await pool.query(
+      `INSERT INTO attempt_answers (attempt_id, question_id, selected_answer, is_correct) VALUES ($1,$2,'A',true)`,
+      [attempt.id, q.id]
+    );
+
+    const res = await request(app)
+      .get(`/api/v1/questions/${q.id}`)
+      .set('Authorization', `Bearer ${fixtures.teacher.token}`);
+    expect(res.status).toBe(200);
+    expect(res.body.answer_count).toBe(1);
+  });
+
+  it('rejects a student trying to fetch the raw shape', async () => {
+    const q = await createQuestion();
+    const res = await request(app)
+      .get(`/api/v1/questions/${q.id}`)
+      .set('Authorization', `Bearer ${fixtures.student.token}`);
+    expect(res.status).toBe(403);
+  });
+
+  it('returns 404 for a question that does not exist', async () => {
+    const res = await request(app)
+      .get('/api/v1/questions/00000000-0000-0000-0000-000000000000')
+      .set('Authorization', `Bearer ${fixtures.teacher.token}`);
+    expect(res.status).toBe(404);
+  });
+});
+
+describe('PATCH /api/v1/questions/:id', () => {
+  async function createQuestion() {
+    const { rows: [q] } = await pool.query(
+      `INSERT INTO questions (topic_id, question_text, question_type, options, correct_answer, difficulty, created_by)
+       VALUES ($1,'Edit me?','mcq','{"A":"Option A","B":"Option B"}','A',2,$2) RETURNING *`,
+      [fixtures.topic.id, fixtures.teacher.id]
+    );
+    return q;
+  }
+
+  it('edits wording, explanation, and difficulty', async () => {
+    const q = await createQuestion();
+    const res = await request(app)
+      .patch(`/api/v1/questions/${q.id}`)
+      .set('Authorization', `Bearer ${fixtures.teacher.token}`)
+      .send({
+        question_text: 'Edited wording?',
+        options: { A: 'Option A', B: 'Option B' },
+        correct_answer: 'A',
+        explanation: 'Because reasons.',
+        difficulty: 3,
+        topic_id: fixtures.topic.id,
+      });
+    expect(res.status).toBe(200);
+    expect(res.body.question_text).toBe('Edited wording?');
+    expect(res.body.explanation).toBe('Because reasons.');
+    expect(res.body.difficulty).toBe(3);
+  });
+
+  it('allows changing the correct answer/options when nobody has answered yet', async () => {
+    const q = await createQuestion();
+    const res = await request(app)
+      .patch(`/api/v1/questions/${q.id}`)
+      .set('Authorization', `Bearer ${fixtures.teacher.token}`)
+      .send({
+        question_text: q.question_text,
+        options: { A: 'Option A', B: 'Option B changed' },
+        correct_answer: 'B',
+      });
+    expect(res.status).toBe(200);
+    expect(res.body.correct_answer).toBe('B');
+  });
+
+  it('does NOT re-lock the answer when the request resubmits the same options/correct_answer unchanged (the portal form always resubmits every field)', async () => {
+    const q = await createQuestion();
+    const { rows: [attempt] } = await pool.query(
+      `INSERT INTO quiz_attempts (student_id, completed_at, score) VALUES ($1, now(), 100) RETURNING id`,
+      [fixtures.student.id]
+    );
+    await pool.query(
+      `INSERT INTO attempt_answers (attempt_id, question_id, selected_answer, is_correct) VALUES ($1,$2,'A',true)`,
+      [attempt.id, q.id]
+    );
+
+    const res = await request(app)
+      .patch(`/api/v1/questions/${q.id}`)
+      .set('Authorization', `Bearer ${fixtures.teacher.token}`)
+      .send({
+        question_text: 'Only the wording changed',
+        options: { A: 'Option A', B: 'Option B' }, // identical to what's stored
+        correct_answer: 'A', // identical to what's stored
+      });
+    expect(res.status).toBe(200);
+    expect(res.body.question_text).toBe('Only the wording changed');
+  });
+
+  it('blocks changing correct_answer/options once the question has been answered', async () => {
+    const q = await createQuestion();
+    const { rows: [attempt] } = await pool.query(
+      `INSERT INTO quiz_attempts (student_id, completed_at, score) VALUES ($1, now(), 100) RETURNING id`,
+      [fixtures.student.id]
+    );
+    await pool.query(
+      `INSERT INTO attempt_answers (attempt_id, question_id, selected_answer, is_correct) VALUES ($1,$2,'A',true)`,
+      [attempt.id, q.id]
+    );
+
+    const res = await request(app)
+      .patch(`/api/v1/questions/${q.id}`)
+      .set('Authorization', `Bearer ${fixtures.teacher.token}`)
+      .send({
+        question_text: q.question_text,
+        options: { A: 'Option A', B: 'Option B' },
+        correct_answer: 'B', // changed from 'A'
+      });
+    expect(res.status).toBe(409);
+    expect(res.body.error).toMatch(/already answered/i);
+
+    // The question itself must be untouched by the rejected attempt.
+    const { rows } = await pool.query('SELECT correct_answer FROM questions WHERE id = $1', [q.id]);
+    expect(rows[0].correct_answer).toBe('A');
+  });
+
+  it('rejects a student trying to edit a question', async () => {
+    const q = await createQuestion();
+    const res = await request(app)
+      .patch(`/api/v1/questions/${q.id}`)
+      .set('Authorization', `Bearer ${fixtures.student.token}`)
+      .send({ question_text: 'Nope', correct_answer: 'A' });
+    expect(res.status).toBe(403);
+  });
+
+  it('rejects a missing question_text with a clear message, not a 500', async () => {
+    const q = await createQuestion();
+    const res = await request(app)
+      .patch(`/api/v1/questions/${q.id}`)
+      .set('Authorization', `Bearer ${fixtures.teacher.token}`)
+      .send({ correct_answer: 'A' });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/question_text/i);
+  });
+
+  it('returns 404 for a question that does not exist', async () => {
+    const res = await request(app)
+      .patch('/api/v1/questions/00000000-0000-0000-0000-000000000000')
+      .set('Authorization', `Bearer ${fixtures.teacher.token}`)
+      .send({ question_text: 'Q?', correct_answer: 'A' });
+    expect(res.status).toBe(404);
+  });
+});

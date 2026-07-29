@@ -153,6 +153,102 @@ async function createQuestion(req, res) {
   }
 }
 
+// Single-question fetch in raw storage shape (options as {A,B,C,D},
+// correct_answer as a letter) -- the portal's edit form needs this exact
+// shape to pre-fill, unlike listQuestions' toAppShape output (options as
+// an ordered array, correct_answer as answer text) which was built for the
+// mobile app and can't be reliably reverse-engineered (duplicate option
+// text would make matching text back to a letter ambiguous). answer_count
+// lets the portal warn/lock the answer fields before the teacher even
+// tries to save, not just on a failed PATCH.
+async function getQuestion(req, res) {
+  const { id } = req.params;
+  const { rows } = await pool.query('SELECT * FROM questions WHERE id = $1', [id]);
+  if (!rows.length) return res.status(404).json({ error: 'Question not found' });
+
+  const { rows: countRows } = await pool.query(
+    'SELECT COUNT(*)::int AS count FROM attempt_answers WHERE question_id = $1',
+    [id]
+  );
+  res.json({ ...rows[0], answer_count: countRows[0].count });
+}
+
+// JSONB doesn't preserve object key order (Postgres normalizes it on
+// storage), so comparing the freshly-stringified request body against a
+// stringified round-trip from the DB would false-positive on "changed"
+// for identical options whose keys just got reordered in storage. Compare
+// by value instead.
+function optionsEqual(a, b) {
+  if (!a || !b) return a === b;
+  const aKeys = Object.keys(a);
+  const bKeys = Object.keys(b);
+  if (aKeys.length !== bKeys.length) return false;
+  return aKeys.every((k) => a[k] === b[k]);
+}
+
+// Free to edit regardless of history: wording, explanation, difficulty,
+// topic. NOT free to edit once answered: options/correct_answer -- a
+// student's attempt_answers.is_correct was computed against the answer
+// key as it existed at the time, and changing that key here would make
+// their (unchangeable) recorded answer disagree with what the question
+// now says was correct. Rather than let that drift silently, the update
+// is rejected outright when the request actually changes either field
+// and the question has been answered -- the same "archive/block instead
+// of silently rewriting history" policy deleteQuestion already applies.
+// Re-submitting the same options/correct_answer the question already has
+// is not a "change" and goes through fine -- the portal's edit form
+// always resubmits every field, so this matters for real usage, not just
+// an edge case.
+async function updateQuestion(req, res) {
+  const { id } = req.params;
+  const {
+    topic_id, past_paper_id, question_text, question_type,
+    options, correct_answer, explanation, difficulty,
+  } = req.body;
+
+  if (!question_text || !correct_answer) {
+    return res.status(400).json({ error: 'question_text and correct_answer are required' });
+  }
+
+  const existingRes = await pool.query('SELECT * FROM questions WHERE id = $1', [id]);
+  if (!existingRes.rows.length) return res.status(404).json({ error: 'Question not found' });
+  const existing = existingRes.rows[0];
+
+  const answerChanged =
+    !optionsEqual(options, existing.options) || correct_answer !== existing.correct_answer;
+
+  if (answerChanged) {
+    const answered = await pool.query(
+      'SELECT 1 FROM attempt_answers WHERE question_id = $1 LIMIT 1',
+      [id]
+    );
+    if (answered.rows.length) {
+      return res.status(409).json({
+        error:
+          "Students have already answered this question, so its options and correct answer are locked -- changing them would make those recorded answers disagree with what the question now says was correct. You can still edit the wording, explanation, difficulty, or topic. To fix a wrong answer key, archive this question and add a corrected one instead.",
+      });
+    }
+  }
+
+  try {
+    const { rows } = await pool.query(
+      `UPDATE questions SET
+         topic_id = $1, past_paper_id = $2, question_text = $3,
+         question_type = $4::question_type, options = $5, correct_answer = $6,
+         explanation = $7, difficulty = COALESCE($8, 2)
+       WHERE id = $9
+       RETURNING *`,
+      [topic_id || null, past_paper_id || null, question_text, question_type || 'mcq',
+       options ? JSON.stringify(options) : null, correct_answer, explanation || null,
+       difficulty, id]
+    );
+    res.json(rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to update question' });
+  }
+}
+
 // Bulk export endpoint: lets the mobile app pull the full offline-cacheable
 // question bank (with answers/explanations) in one request after login.
 async function exportBank(req, res) {
@@ -168,6 +264,6 @@ async function exportBank(req, res) {
 }
 
 module.exports = {
-  listQuestions, createQuestion, exportBank, generateAnswer,
-  deleteQuestion, restoreQuestion,
+  listQuestions, getQuestion, createQuestion, updateQuestion, exportBank,
+  generateAnswer, deleteQuestion, restoreQuestion,
 };

@@ -63,6 +63,12 @@ const createQuestion = [
   body('difficulty').optional().isInt({ min: 1, max: 3 }).withMessage('difficulty must be between 1 and 3'),
 ];
 
+// Same shape as createQuestion -- the portal's edit form resubmits every
+// field (not a partial patch), so this validates identically.
+const updateQuestion = createQuestion;
+
+const updateTopic = createTopic;
+
 const generateAnswer = [
   requiredString('question_text', 'question_text'),
   body('topic_title').optional().isString().withMessage('topic_title must be text'),
@@ -78,6 +84,13 @@ const createQuiz = [
   body('is_adaptive').optional().isBoolean().withMessage('is_adaptive must be true or false'),
   body('question_ids').isArray({ min: 1 }).withMessage('question_ids must be a non-empty array'),
   body('question_ids.*').isUUID().withMessage('question_ids must all be valid ids'),
+];
+
+// Editing a quiz only covers title/topic (not which questions it
+// contains), so this doesn't require question_ids like createQuiz does.
+const updateQuiz = [
+  requiredString('title', 'title'),
+  body('topic_id').optional({ values: 'falsy' }).isUUID().withMessage('topic_id must be a valid id'),
 ];
 
 const createPastPaper = [
@@ -106,6 +119,9 @@ module.exports = {
   login,
   createTopic,
   createQuestion,
+  updateQuestion,
+  updateTopic,
+  updateQuiz,
   generateAnswer,
   importPdfMeta,
   createQuiz,
