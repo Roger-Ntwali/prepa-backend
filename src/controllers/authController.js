@@ -88,4 +88,37 @@ async function login(req, res) {
   }
 }
 
-module.exports = { register, login };
+// Public (no session exists yet -- that's the whole point). Exchanges an
+// admin-issued reset code for a new password. Matches on
+// email + reset_code + an unexpired reset_code_expires_at all at once, so
+// a wrong code and an expired code get the same clear, non-revealing
+// error rather than leaking which part failed.
+async function resetPasswordWithCode(req, res) {
+  const { email, code, new_password } = req.body;
+  try {
+    const { rows } = await pool.query(
+      `SELECT id FROM users
+       WHERE email = $1 AND reset_code = $2 AND reset_code_expires_at > now()`,
+      [email, code]
+    );
+    const user = rows[0];
+    if (!user) {
+      return res.status(400).json({
+        error: 'That code is invalid or has expired. Ask your administrator for a new one.',
+      });
+    }
+
+    const password_hash = await bcrypt.hash(new_password, 10);
+    await pool.query(
+      `UPDATE users SET password_hash = $1, reset_code = NULL, reset_code_expires_at = NULL
+       WHERE id = $2`,
+      [password_hash, user.id]
+    );
+    res.json({ ok: true, message: 'Password updated. You can now sign in with your new password.' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Password reset failed' });
+  }
+}
+
+module.exports = { register, login, resetPasswordWithCode };

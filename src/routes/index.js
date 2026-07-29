@@ -39,10 +39,12 @@ router.post('/past-papers', requireAuth, requireRole('admin'), upload.single('fi
 router.delete('/past-papers/:id', requireAuth, requireRole('admin'), v.idParam, validate, pastPapersController.deletePastPaper);
 router.get('/past-papers/:id/download-url', requireAuth, v.idParam, validate, pastPapersController.getDownloadUrl);
 
-// User management — admin only (approve/reject teacher accounts).
+// User management — admin only (approve/reject/manage teacher accounts).
 router.get('/users/pending-teachers', requireAuth, requireRole('admin'), usersController.listPendingTeachers);
+router.get('/users/teachers', requireAuth, requireRole('admin'), usersController.listTeachers);
 router.patch('/users/:id/approve', requireAuth, requireRole('admin'), v.idParam, validate, usersController.approveTeacher);
 router.delete('/users/:id/reject', requireAuth, requireRole('admin'), v.idParam, validate, usersController.rejectTeacher);
+router.post('/users/:id/reset-password', requireAuth, requireRole('admin'), v.idParam, validate, usersController.resetTeacherPassword);
 // Student list/overview — admin and teacher both need this for the dashboard.
 router.get('/users/students', requireAuth, requireRole('teacher', 'admin'), usersController.listStudents);
 
@@ -53,6 +55,10 @@ router.get('/reports/students/:id', requireAuth, requireRole('teacher', 'admin')
 // Auth
 router.post('/auth/register', authLimiter, v.register, validate, authController.register);
 router.post('/auth/login', authLimiter, v.login, validate, authController.login);
+// Public -- no session exists yet. Rate-limited the same as register/login,
+// the other two unauthenticated entry points, since a code is guessable in
+// principle (6 digits) even though it's short-lived and single-use.
+router.post('/auth/reset-password', authLimiter, v.useResetCode, validate, authController.resetPasswordWithCode);
 
 // Topics
 router.get('/topics', requireAuth, topicsController.listTopics);
