@@ -48,6 +48,15 @@ const login = [
   body('password').notEmpty().withMessage('password is required'),
 ];
 
+const useResetCode = [
+  body('email').isEmail().withMessage('email must be a valid email address'),
+  body('code').exists().withMessage('code is required').bail()
+    .isLength({ min: 6, max: 6 }).withMessage('code must be 6 digits').bail()
+    .isNumeric().withMessage('code must be numeric'),
+  body('new_password').exists().withMessage('new_password is required').bail()
+    .isLength({ min: 6 }).withMessage('new_password must be at least 6 characters'),
+];
+
 const createTopic = [
   requiredString('title', 'title'),
   body('description').optional({ values: 'falsy' }).isString().withMessage('description must be text'),
@@ -104,6 +113,7 @@ const syncAttempts = [
 module.exports = {
   register,
   login,
+  useResetCode,
   createTopic,
   createQuestion,
   generateAnswer,
