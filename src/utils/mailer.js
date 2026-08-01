@@ -25,6 +25,10 @@ async function sendResetCodeEmail(to, code) {
   }
 
   const from = process.env.RESEND_FROM_EMAIL || 'PREPA <onboarding@resend.dev>';
+  // Logged unconditionally (not just folded into the error path below) so
+  // "did it even try to send, and to/from what" is never a guess when
+  // reading logs after the fact.
+  console.log(`Sending reset code email: from="${from}" to="${to}"`);
 
   try {
     const res = await fetch('https://api.resend.com/emails', {
@@ -42,14 +46,20 @@ async function sendResetCodeEmail(to, code) {
       }),
     });
 
+    const data = await res.json().catch(() => null);
+
     if (!res.ok) {
-      const data = await res.json().catch(() => null);
       console.error(
         `Resend API error (status ${res.status}) sending reset code to ${to}:`,
         data?.message || data
       );
       return false;
     }
+    // Resend's success response includes an `id` for the sent email -- the
+    // one thing that lets this be looked up in the Resend dashboard's
+    // Emails/Logs page to check actual delivery status (accepted by Resend
+    // is not the same as delivered to the inbox).
+    console.log(`Resend accepted the reset code email: id=${data?.id} to="${to}"`);
     return true;
   } catch (err) {
     console.error(`Failed to send reset code email to ${to}:`, err.message);
