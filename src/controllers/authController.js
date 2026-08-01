@@ -78,6 +78,9 @@ async function login(req, res) {
     if (!user.is_active) {
       return res.status(403).json({ error: 'Your teacher account is awaiting admin approval.' });
     }
+    if (user.archived_at) {
+      return res.status(403).json({ error: 'This account has been removed.' });
+    }
 
     const token = signToken(user);
     delete user.password_hash;

@@ -31,7 +31,7 @@ router.post('/sync/push', requireAuth, syncController.push);
 
 // Past papers — anyone signed in can view/download; only admin can add one
 // (teachers can add questions and quizzes, but not upload exam papers).
-router.get('/past-papers', requireAuth, pastPapersController.listPastPapers);
+router.get('/past-papers', requireAuth, v.listPastPapersQuery, validate, pastPapersController.listPastPapers);
 // multer runs before the validator, same reasoning as import-pdf below --
 // it's what parses title/year/term/topic_id out of the multipart body
 // when a file is attached.
@@ -41,12 +41,17 @@ router.get('/past-papers/:id/download-url', requireAuth, v.idParam, validate, pa
 
 // User management — admin only (approve/reject/manage teacher accounts).
 router.get('/users/pending-teachers', requireAuth, requireRole('admin'), usersController.listPendingTeachers);
-router.get('/users/teachers', requireAuth, requireRole('admin'), usersController.listTeachers);
+router.get('/users/teachers', requireAuth, requireRole('admin'), v.listTeachersQuery, validate, usersController.listTeachers);
 router.patch('/users/:id/approve', requireAuth, requireRole('admin'), v.idParam, validate, usersController.approveTeacher);
 router.delete('/users/:id/reject', requireAuth, requireRole('admin'), v.idParam, validate, usersController.rejectTeacher);
 router.post('/users/:id/reset-password', requireAuth, requireRole('admin'), v.idParam, validate, usersController.resetTeacherPassword);
 // Student list/overview — admin and teacher both need this for the dashboard.
-router.get('/users/students', requireAuth, requireRole('teacher', 'admin'), usersController.listStudents);
+router.get('/users/students', requireAuth, requireRole('teacher', 'admin'), v.listStudentsQuery, validate, usersController.listStudents);
+// Student CRUD — admin only, matching how teacher accounts are managed above.
+router.post('/users/students', requireAuth, requireRole('admin'), v.createStudent, validate, usersController.createStudent);
+router.patch('/users/students/:id', requireAuth, requireRole('admin'), v.idParam, v.updateStudent, validate, usersController.updateStudent);
+router.delete('/users/students/:id', requireAuth, requireRole('admin'), v.idParam, validate, usersController.deleteStudent);
+router.patch('/users/students/:id/restore', requireAuth, requireRole('admin'), v.idParam, validate, usersController.restoreStudent);
 
 // Reports — per-student performance detail, for admin + teacher dashboard.
 router.get('/reports/class-summary', requireAuth, requireRole('teacher', 'admin'), reportsController.classSummary);
@@ -61,7 +66,7 @@ router.post('/auth/login', authLimiter, v.login, validate, authController.login)
 router.post('/auth/reset-password', authLimiter, v.useResetCode, validate, authController.resetPasswordWithCode);
 
 // Topics
-router.get('/topics', requireAuth, topicsController.listTopics);
+router.get('/topics', requireAuth, v.listTopicsQuery, validate, topicsController.listTopics);
 router.post('/topics', requireAuth, requireRole('teacher', 'admin'), v.createTopic, validate, topicsController.createTopic);
 router.patch('/topics/:id', requireAuth, requireRole('teacher', 'admin'), v.idParam, v.updateTopic, validate, topicsController.updateTopic);
 
@@ -87,7 +92,7 @@ router.delete('/questions/:id', requireAuth, requireRole('teacher', 'admin'), v.
 router.patch('/questions/:id/restore', requireAuth, requireRole('teacher', 'admin'), v.idParam, validate, questionsController.restoreQuestion);
 
 // Quizzes
-router.get('/quizzes', requireAuth, quizzesController.listQuizzes);
+router.get('/quizzes', requireAuth, v.listQuizzesQuery, validate, quizzesController.listQuizzes);
 router.post('/quizzes', requireAuth, requireRole('teacher', 'admin'), v.createQuiz, validate, quizzesController.createQuiz);
 router.get('/quizzes/:id', requireAuth, v.idParam, validate, quizzesController.getQuiz);
 router.patch('/quizzes/:id', requireAuth, requireRole('teacher', 'admin'), v.idParam, v.updateQuiz, validate, quizzesController.updateQuiz);

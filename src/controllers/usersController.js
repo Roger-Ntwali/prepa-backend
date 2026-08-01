@@ -1,5 +1,7 @@
 const crypto = require('crypto');
+const bcrypt = require('bcryptjs');
 const pool = require('../config/db');
+const { parsePageLimit } = require('../utils/pagination');
 
 // Teachers awaiting approval (registered but is_active = false).
 async function listPendingTeachers(req, res) {
@@ -14,12 +16,20 @@ async function listPendingTeachers(req, res) {
 // Every teacher, active or pending, for the admin's Teachers management
 // screen. Pending ones surface first -- they're the ones needing action.
 async function listTeachers(req, res) {
+  const { page, limit, offset } = parsePageLimit(req);
   const { rows } = await pool.query(
-    `SELECT id, full_name, email, username, is_active, created_at
+    `SELECT id, full_name, email, username, is_active, created_at,
+            COUNT(*) OVER()::int AS total_count
      FROM users WHERE role = 'teacher'
-     ORDER BY is_active ASC, created_at DESC`
+     ORDER BY is_active ASC, created_at DESC
+     LIMIT $1 OFFSET $2`,
+    [limit, offset]
   );
-  res.json({ teachers: rows });
+  const total = rows[0]?.total_count ?? 0;
+  res.json({
+    teachers: rows.map(({ total_count, ...r }) => r),
+    total, page, limit,
+  });
 }
 
 async function approveTeacher(req, res) {
@@ -64,24 +74,135 @@ async function resetTeacherPassword(req, res) {
 }
 
 // All students, with a quick performance snapshot for the admin/teacher
-// dashboard's overview list.
+// dashboard's overview list. Archived (soft-deleted) students are excluded,
+// same as archived questions never appear in the bank.
 async function listStudents(req, res) {
+  const { page, limit, offset } = parsePageLimit(req);
+  const { search } = req.query;
+  const params = [limit, offset];
+  let searchClause = '';
+  if (search) {
+    params.push(`%${search}%`);
+    searchClause = `AND (u.full_name ILIKE $${params.length} OR u.email ILIKE $${params.length})`;
+  }
+
   const { rows } = await pool.query(`
     SELECT
-      u.id, u.full_name, u.username, u.class_level,
+      u.id, u.full_name, u.email, u.class_level,
       COUNT(DISTINCT qa.id)::int AS attempts_count,
       ROUND(AVG(qa.score)::numeric, 1) AS avg_score,
-      MAX(qa.completed_at) AS last_active
+      MAX(qa.completed_at) AS last_active,
+      COUNT(*) OVER()::int AS total_count
     FROM users u
     LEFT JOIN quiz_attempts qa ON qa.student_id = u.id AND qa.completed_at IS NOT NULL
-    WHERE u.role = 'student'
+    WHERE u.role = 'student' AND u.archived_at IS NULL
+    ${searchClause}
     GROUP BY u.id
     ORDER BY u.full_name ASC
-  `);
-  res.json({ students: rows });
+    LIMIT $1 OFFSET $2
+  `, params);
+
+  const total = rows[0]?.total_count ?? 0;
+  res.json({
+    students: rows.map(({ total_count, ...r }) => r),
+    total, page, limit,
+  });
+}
+
+// Admin creates a student account directly (no self-service invite email
+// path exists yet). A random temp password is generated and returned once
+// -- the admin is expected to relay it to the student, who can change it
+// later via the same forgot-password flow any user uses.
+async function createStudent(req, res) {
+  const { full_name, email, class_level } = req.body;
+  const tempPassword = crypto.randomBytes(9).toString('base64url');
+
+  try {
+    const password_hash = await bcrypt.hash(tempPassword, 10);
+    const { rows } = await pool.query(
+      `INSERT INTO users (full_name, role, email, password_hash, school_id, class_level, is_active)
+       VALUES ($1, 'student', $2, $3, $4, $5, true)
+       RETURNING id, full_name, email, class_level, is_active, created_at`,
+      [full_name, email, password_hash, req.user.school_id || null, class_level || null]
+    );
+    res.status(201).json({ user: rows[0], temp_password: tempPassword });
+  } catch (err) {
+    if (err.code === '23505') {
+      return res.status(409).json({ error: 'Email already in use' });
+    }
+    console.error(err);
+    res.status(500).json({ error: 'Failed to create student' });
+  }
+}
+
+async function updateStudent(req, res) {
+  const { id } = req.params;
+  const { full_name, email, class_level } = req.body;
+
+  try {
+    const { rows } = await pool.query(
+      `UPDATE users SET full_name = $1, email = $2, class_level = $3
+       WHERE id = $4 AND role = 'student'
+       RETURNING id, full_name, email, class_level, is_active, created_at`,
+      [full_name, email, class_level || null, id]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Student not found' });
+    res.json({ user: rows[0] });
+  } catch (err) {
+    if (err.code === '23505') {
+      return res.status(409).json({ error: 'Email already in use' });
+    }
+    console.error(err);
+    res.status(500).json({ error: 'Failed to update student' });
+  }
+}
+
+// Same reasoning as questionsController.deleteQuestion: quiz_attempts.student_id
+// is ON DELETE CASCADE, so hard-deleting a student who has taken quizzes would
+// take their whole history with it and silently rewrite class reports. If
+// they have attempts, archive instead; otherwise there's nothing to lose.
+async function deleteStudent(req, res) {
+  const { id } = req.params;
+
+  const existing = await pool.query(
+    `SELECT id FROM users WHERE id = $1 AND role = 'student'`,
+    [id]
+  );
+  if (!existing.rows.length) {
+    return res.status(404).json({ error: 'Student not found' });
+  }
+
+  const answered = await pool.query(
+    'SELECT 1 FROM quiz_attempts WHERE student_id = $1 LIMIT 1',
+    [id]
+  );
+
+  if (answered.rows.length) {
+    await pool.query('UPDATE users SET archived_at = now() WHERE id = $1', [id]);
+    return res.json({
+      id,
+      action: 'archived',
+      message:
+        'This student has quiz history, so the account was archived instead of deleted. They no longer appear in the roster or can sign in, and past results are unchanged.',
+    });
+  }
+
+  await pool.query(`DELETE FROM users WHERE id = $1 AND role = 'student'`, [id]);
+  res.json({ id, action: 'deleted', message: 'Student deleted.' });
+}
+
+async function restoreStudent(req, res) {
+  const { id } = req.params;
+  const { rows } = await pool.query(
+    `UPDATE users SET archived_at = NULL WHERE id = $1 AND role = 'student' RETURNING id`,
+    [id]
+  );
+  if (!rows.length) return res.status(404).json({ error: 'Student not found' });
+  res.json({ id, action: 'restored', message: 'Student restored.' });
 }
 
 module.exports = {
   listPendingTeachers, listTeachers, approveTeacher, rejectTeacher,
   resetTeacherPassword, listStudents,
+  createStudent, updateStudent, deleteStudent, restoreStudent,
 };

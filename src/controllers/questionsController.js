@@ -1,6 +1,7 @@
 const pool = require('../config/db');
 const { toAppShape } = require('../utils/questionShape');
 const { callGemini } = require('../utils/gemini');
+const { parsePageLimit } = require('../utils/pagination');
 
 // Given just a question (and optionally its topic), asks Gemini to draft
 // 4 plausible MCQ options, the correct one, and a short explanation — the
@@ -53,16 +54,38 @@ Keep options short, plausible, and at O-Level difficulty. Make exactly one optio
 }
 
 async function listQuestions(req, res) {
-  const { topic_id, past_paper_id, include_archived } = req.query;
+  const { topic_id, past_paper_id, include_archived, page, search } = req.query;
   const params = [];
   // Archived questions stay out of every listing unless explicitly asked
   // for, so the student app and the portal never serve a retired question.
   const clauses = include_archived === 'true' ? [] : ['archived_at IS NULL'];
   if (topic_id) { params.push(topic_id); clauses.push(`topic_id = $${params.length}`); }
   if (past_paper_id) { params.push(past_paper_id); clauses.push(`past_paper_id = $${params.length}`); }
+  // Only meaningful once paginated -- the portal's search box used to
+  // filter client-side over the full bank, which silently stopped working
+  // once only one page of rows was ever fetched.
+  if (search) { params.push(`%${search}%`); clauses.push(`question_text ILIKE $${params.length}`); }
   let sql = 'SELECT * FROM questions';
   if (clauses.length) sql += ' WHERE ' + clauses.join(' AND ');
   sql += ' ORDER BY created_at DESC';
+
+  // Pagination is opt-in (only when ?page is sent) so the mobile app's
+  // existing full-bank fetch (it never sends page/limit) is untouched --
+  // the body stays a bare array either way; total count rides on a header
+  // instead of changing the response shape.
+  if (page) {
+    const { limit, offset } = parsePageLimit(req);
+    const countSql = clauses.length
+      ? `SELECT COUNT(*)::int AS total FROM questions WHERE ${clauses.join(' AND ')}`
+      : 'SELECT COUNT(*)::int AS total FROM questions';
+    const [{ rows }, { rows: countRows }] = await Promise.all([
+      pool.query(`${sql} LIMIT $${params.length + 1} OFFSET $${params.length + 2}`, [...params, limit, offset]),
+      pool.query(countSql, params),
+    ]);
+    res.set('X-Total-Count', String(countRows[0].total));
+    return res.json(rows.map(toAppShape));
+  }
+
   const { rows } = await pool.query(sql, params);
   res.json(rows.map(toAppShape));
 }

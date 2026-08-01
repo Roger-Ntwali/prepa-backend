@@ -113,10 +113,38 @@ const createPastPaper = [
 
 const idParam = param('id').isUUID().withMessage('id must be a valid id');
 
+// Shared by every list endpoint's query validator below. `page`/`limit` are
+// only ever consulted server-side if present at all -- the mobile app never
+// sends them, so its unpaginated full-list calls are untouched.
+const paginationQuery = [
+  query('page').optional().isInt({ min: 1 }).withMessage('page must be a positive whole number'),
+  query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('limit must be between 1 and 100'),
+];
+
 const listQuestionsQuery = [
   query('topic_id').optional({ values: 'falsy' }).isUUID().withMessage('topic_id must be a valid id'),
   query('past_paper_id').optional({ values: 'falsy' }).isUUID().withMessage('past_paper_id must be a valid id'),
+  query('search').optional({ values: 'falsy' }).isString().withMessage('search must be text'),
+  ...paginationQuery,
 ];
+
+const listTopicsQuery = [...paginationQuery];
+const listQuizzesQuery = [...paginationQuery];
+const listPastPapersQuery = [...paginationQuery];
+const listTeachersQuery = [...paginationQuery];
+
+const listStudentsQuery = [
+  query('search').optional({ values: 'falsy' }).isString().withMessage('search must be text'),
+  ...paginationQuery,
+];
+
+const createStudent = [
+  requiredString('full_name', 'full name'),
+  body('email').isEmail().withMessage('email must be a valid email address').normalizeEmail(),
+  body('class_level').optional({ values: 'falsy' }).isString().withMessage('class_level must be text'),
+];
+
+const updateStudent = createStudent;
 
 const syncAttempts = [
   body('attempts').isArray({ min: 1 }).withMessage('attempts must be a non-empty array'),
@@ -138,5 +166,12 @@ module.exports = {
   createPastPaper,
   idParam,
   listQuestionsQuery,
+  listTopicsQuery,
+  listQuizzesQuery,
+  listPastPapersQuery,
+  listTeachersQuery,
+  listStudentsQuery,
+  createStudent,
+  updateStudent,
   syncAttempts,
 };

@@ -23,7 +23,11 @@ process.on('uncaughtException', (err) => {
 });
 
 app.use(helmet());
-app.use(cors());
+// X-Total-Count carries pagination totals for topics/questions/quizzes (see
+// their controllers) -- without exposedHeaders, browsers strip any header
+// that isn't on the CORS safelist from what fetch()'s Response.headers can
+// read cross-origin, even though it's plainly visible in curl/devtools.
+app.use(cors({ exposedHeaders: ['X-Total-Count'] }));
 app.use(express.json());
 if (process.env.NODE_ENV !== 'test') app.use(morgan('dev'));
 

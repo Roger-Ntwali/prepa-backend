@@ -1,14 +1,27 @@
 const pool = require('../config/db');
 const { signUploadPath } = require('../utils/signedUrl');
 const { saveUploadedPdf } = require('../utils/savedUpload');
+const { parsePageLimit } = require('../utils/pagination');
 
+// Portal-only (the mobile app never calls this directly), so this is
+// always paginated -- no bare-array compatibility concern like
+// topics/questions/quizzes have.
 async function listPastPapers(req, res) {
   try {
+    const { page, limit, offset } = parsePageLimit(req);
     const { rows } = await pool.query(
-      `SELECT id, title, year, term, topic_id, file_url, created_at
-       FROM past_papers WHERE archived_at IS NULL ORDER BY year DESC`
+      `SELECT id, title, year, term, topic_id, file_url, created_at,
+              COUNT(*) OVER()::int AS total_count
+       FROM past_papers WHERE archived_at IS NULL
+       ORDER BY year DESC
+       LIMIT $1 OFFSET $2`,
+      [limit, offset]
     );
-    res.json({ past_papers: rows });
+    const total = rows[0]?.total_count ?? 0;
+    res.json({
+      past_papers: rows.map(({ total_count, ...r }) => r),
+      total, page, limit,
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to load past papers' });

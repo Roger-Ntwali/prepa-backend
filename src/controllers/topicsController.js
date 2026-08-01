@@ -1,16 +1,31 @@
 const pool = require('../config/db');
+const { parsePageLimit } = require('../utils/pagination');
 
 async function listTopics(req, res) {
   try {
     // question_count comes along for the ride so the portal's Topics page
     // doesn't have to download the entire question bank just to tally it.
-    const { rows } = await pool.query(
-      `SELECT t.*, COUNT(q.id)::int AS question_count
+    const baseSql = `SELECT t.*, COUNT(q.id)::int AS question_count
        FROM topics t
        LEFT JOIN questions q ON q.topic_id = t.id AND q.archived_at IS NULL
        GROUP BY t.id
-       ORDER BY t.order_index ASC, t.title ASC`
-    );
+       ORDER BY t.order_index ASC, t.title ASC`;
+
+    // Opt-in, same as questionsController.listQuestions: the mobile app
+    // calls this endpoint too and never sends ?page, so its full-list fetch
+    // is untouched -- the body stays a bare array either way, with the
+    // total riding on a header when pagination is actually requested.
+    if (req.query.page) {
+      const { limit, offset } = parsePageLimit(req);
+      const [{ rows }, { rows: countRows }] = await Promise.all([
+        pool.query(`${baseSql} LIMIT $1 OFFSET $2`, [limit, offset]),
+        pool.query('SELECT COUNT(*)::int AS total FROM topics'),
+      ]);
+      res.set('X-Total-Count', String(countRows[0].total));
+      return res.json(rows);
+    }
+
+    const { rows } = await pool.query(baseSql);
     res.json(rows);
   } catch (err) {
     console.error(err);

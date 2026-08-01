@@ -1,5 +1,6 @@
 const pool = require('../config/db');
 const { toAppShape } = require('../utils/questionShape');
+const { parsePageLimit } = require('../utils/pagination');
 
 async function createQuiz(req, res) {
   const { title, topic_id, is_adaptive, question_ids } = req.body;
@@ -56,16 +57,28 @@ async function updateQuiz(req, res) {
 // Adaptive/auto-generated sets aren't listed here since they're
 // requested on demand, not browsed.
 async function listQuizzes(req, res) {
-  const { rows } = await pool.query(
-    `SELECT z.id, z.title, z.topic_id, t.title AS topic_title, z.created_at,
+  const baseSql = `SELECT z.id, z.title, z.topic_id, t.title AS topic_title, z.created_at,
             COUNT(qq.question_id)::int AS question_count
      FROM quizzes z
      LEFT JOIN topics t ON t.id = z.topic_id
      LEFT JOIN quiz_questions qq ON qq.quiz_id = z.id
      WHERE z.is_adaptive = false AND z.archived_at IS NULL
      GROUP BY z.id, t.title
-     ORDER BY z.created_at DESC`
-  );
+     ORDER BY z.created_at DESC`;
+
+  // Opt-in, same as listQuestions/listTopics: the mobile app calls this
+  // endpoint too and never sends ?page, so its full-list fetch is untouched.
+  if (req.query.page) {
+    const { limit, offset } = parsePageLimit(req);
+    const [{ rows }, { rows: countRows }] = await Promise.all([
+      pool.query(`${baseSql} LIMIT $1 OFFSET $2`, [limit, offset]),
+      pool.query(`SELECT COUNT(*)::int AS total FROM quizzes WHERE is_adaptive = false AND archived_at IS NULL`),
+    ]);
+    res.set('X-Total-Count', String(countRows[0].total));
+    return res.json(rows);
+  }
+
+  const { rows } = await pool.query(baseSql);
   res.json(rows);
 }
 
