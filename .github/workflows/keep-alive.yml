@@ -1,0 +1,17 @@
+name: Keep Render backend awake
+
+on:
+  schedule:
+    # Render's free tier spins the instance down after 15 minutes of no
+    # inbound traffic -- ping the health endpoint often enough that it
+    # never sees a gap that long. GitHub can delay scheduled runs by a
+    # few minutes, so 10 minutes leaves margin under the 15-minute limit.
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping health endpoint
+        run: curl -fsS --max-time 20 https://prepa-backend-23hm.onrender.com/api/v1/health
