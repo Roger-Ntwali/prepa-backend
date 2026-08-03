@@ -58,16 +58,36 @@ async function listQuestions(req, res) {
   const params = [];
   // Archived questions stay out of every listing unless explicitly asked
   // for, so the student app and the portal never serve a retired question.
-  const clauses = include_archived === 'true' ? [] : ['archived_at IS NULL'];
-  if (topic_id) { params.push(topic_id); clauses.push(`topic_id = $${params.length}`); }
-  if (past_paper_id) { params.push(past_paper_id); clauses.push(`past_paper_id = $${params.length}`); }
+  // Aliased/prefixed with q. throughout since the join below (for
+  // used_in_quizzes) pulls in quizzes, which also has topic_id/archived_at
+  // columns -- unprefixed references would be ambiguous once joined.
+  const clauses = include_archived === 'true' ? [] : ['q.archived_at IS NULL'];
+  if (topic_id) { params.push(topic_id); clauses.push(`q.topic_id = $${params.length}`); }
+  if (past_paper_id) { params.push(past_paper_id); clauses.push(`q.past_paper_id = $${params.length}`); }
   // Only meaningful once paginated -- the portal's search box used to
   // filter client-side over the full bank, which silently stopped working
   // once only one page of rows was ever fetched.
-  if (search) { params.push(`%${search}%`); clauses.push(`question_text ILIKE $${params.length}`); }
-  let sql = 'SELECT * FROM questions';
+  if (search) { params.push(`%${search}%`); clauses.push(`q.question_text ILIKE $${params.length}`); }
+
+  // used_in_quizzes lets the quiz builder's question picker flag questions
+  // already assigned elsewhere -- a question can legitimately sit in more
+  // than one quiz (no unique constraint on quiz_questions.question_id), so
+  // this is a list, not a single flag. Archived/adaptive quizzes are
+  // excluded: an archived quiz is no longer "in use", and adaptive sets
+  // are per-student generated practice, not a teacher-authored quiz a
+  // question could be double-booked into.
+  let sql = `
+    SELECT q.*,
+      COALESCE(
+        json_agg(jsonb_build_object('id', qz.id, 'title', qz.title))
+          FILTER (WHERE qz.id IS NOT NULL),
+        '[]'
+      ) AS used_in_quizzes
+    FROM questions q
+    LEFT JOIN quiz_questions qq ON qq.question_id = q.id
+    LEFT JOIN quizzes qz ON qz.id = qq.quiz_id AND qz.archived_at IS NULL AND qz.is_adaptive = false`;
   if (clauses.length) sql += ' WHERE ' + clauses.join(' AND ');
-  sql += ' ORDER BY created_at DESC';
+  sql += ' GROUP BY q.id ORDER BY q.created_at DESC';
 
   // Pagination is opt-in (only when ?page is sent) so the mobile app's
   // existing full-bank fetch (it never sends page/limit) is untouched --
@@ -76,8 +96,8 @@ async function listQuestions(req, res) {
   if (page) {
     const { limit, offset } = parsePageLimit(req);
     const countSql = clauses.length
-      ? `SELECT COUNT(*)::int AS total FROM questions WHERE ${clauses.join(' AND ')}`
-      : 'SELECT COUNT(*)::int AS total FROM questions';
+      ? `SELECT COUNT(*)::int AS total FROM questions q WHERE ${clauses.join(' AND ')}`
+      : 'SELECT COUNT(*)::int AS total FROM questions q';
     const [{ rows }, { rows: countRows }] = await Promise.all([
       pool.query(`${sql} LIMIT $${params.length + 1} OFFSET $${params.length + 2}`, [...params, limit, offset]),
       pool.query(countSql, params),

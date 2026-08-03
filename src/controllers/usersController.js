@@ -78,34 +78,59 @@ async function resetTeacherPassword(req, res) {
 // same as archived questions never appear in the bank.
 async function listStudents(req, res) {
   const { page, limit, offset } = parsePageLimit(req);
-  const { search } = req.query;
+  const { search, class_level, active } = req.query;
   const params = [limit, offset];
   let searchClause = '';
   if (search) {
     params.push(`%${search}%`);
     searchClause = `AND (u.full_name ILIKE $${params.length} OR u.email ILIKE $${params.length})`;
   }
+  let classClause = '';
+  if (class_level) {
+    params.push(class_level);
+    classClause = `AND u.class_level = $${params.length}`;
+  }
+  // "Active" / "Never" reflect last_active, which is an aggregate
+  // (MAX(qa.completed_at)) -- filtering on it belongs in HAVING, not WHERE.
+  let havingClause = '';
+  if (active === 'active') havingClause = 'HAVING MAX(qa.completed_at) IS NOT NULL';
+  else if (active === 'never') havingClause = 'HAVING MAX(qa.completed_at) IS NULL';
 
-  const { rows } = await pool.query(`
-    SELECT
-      u.id, u.full_name, u.email, u.class_level,
-      COUNT(DISTINCT qa.id)::int AS attempts_count,
-      ROUND(AVG(qa.score)::numeric, 1) AS avg_score,
-      MAX(qa.completed_at) AS last_active,
-      COUNT(*) OVER()::int AS total_count
-    FROM users u
-    LEFT JOIN quiz_attempts qa ON qa.student_id = u.id AND qa.completed_at IS NOT NULL
-    WHERE u.role = 'student' AND u.archived_at IS NULL
-    ${searchClause}
-    GROUP BY u.id
-    ORDER BY u.full_name ASC
-    LIMIT $1 OFFSET $2
-  `, params);
+  // The class-dropdown query is independent of this request's own
+  // filters/pagination, so it runs alongside the main query instead of
+  // after it -- two sequential round-trips to a remote Neon connection
+  // measurably adds up versus one.
+  const [{ rows }, { rows: classRows }] = await Promise.all([
+    pool.query(`
+      SELECT
+        u.id, u.full_name, u.email, u.class_level,
+        COUNT(DISTINCT qa.id)::int AS attempts_count,
+        ROUND(AVG(qa.score)::numeric, 1) AS avg_score,
+        MAX(qa.completed_at) AS last_active,
+        COUNT(*) OVER()::int AS total_count
+      FROM users u
+      LEFT JOIN quiz_attempts qa ON qa.student_id = u.id AND qa.completed_at IS NOT NULL
+      WHERE u.role = 'student' AND u.archived_at IS NULL
+      ${searchClause} ${classClause}
+      GROUP BY u.id
+      ${havingClause}
+      ORDER BY u.full_name ASC
+      LIMIT $1 OFFSET $2
+    `, params),
+    // Powers the class filter dropdown -- computed fresh each call (cheap,
+    // small table) rather than kept in sync some other way.
+    pool.query(
+      `SELECT DISTINCT class_level FROM users
+       WHERE role = 'student' AND archived_at IS NULL AND class_level IS NOT NULL
+       ORDER BY class_level`
+    ),
+  ]);
 
   const total = rows[0]?.total_count ?? 0;
   res.json({
     students: rows.map(({ total_count, ...r }) => r),
     total, page, limit,
+    available_classes: classRows.map((r) => r.class_level),
   });
 }
 

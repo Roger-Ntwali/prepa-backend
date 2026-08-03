@@ -135,6 +135,8 @@ const listTeachersQuery = [...paginationQuery];
 
 const listStudentsQuery = [
   query('search').optional({ values: 'falsy' }).isString().withMessage('search must be text'),
+  query('class_level').optional({ values: 'falsy' }).isString().withMessage('class_level must be text'),
+  query('active').optional({ values: 'falsy' }).isIn(['active', 'never']).withMessage('active must be "active" or "never"'),
   ...paginationQuery,
 ];
 

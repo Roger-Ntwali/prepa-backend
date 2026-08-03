@@ -22,6 +22,11 @@ function toAppShape(row) {
     correct_answer: correctText,
     explanation: row.explanation,
     difficulty: difficultyWord,
+    // Portal-only (the quiz builder's question picker uses this to flag
+    // questions already assigned elsewhere); harmless extra field for the
+    // mobile app, which doesn't look for it. Only listQuestions' query
+    // actually joins quiz_questions, so this is [] everywhere else.
+    used_in_quizzes: row.used_in_quizzes || [],
   };
 }
 
