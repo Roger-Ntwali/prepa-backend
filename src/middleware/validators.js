@@ -144,6 +144,11 @@ const listStudentsQuery = [
   ...paginationQuery,
 ];
 
+const classSummaryQuery = [
+  query('class_level').optional({ values: 'falsy' }).isString().withMessage('class_level must be text'),
+  query('range').optional({ values: 'falsy' }).isIn(['7d', '30d', 'all']).withMessage('range must be "7d", "30d", or "all"'),
+];
+
 const createStudent = [
   requiredString('full_name', 'full name'),
   body('email').isEmail().withMessage('email must be a valid email address').normalizeEmail(),
@@ -178,6 +183,7 @@ module.exports = {
   listPastPapersQuery,
   listTeachersQuery,
   listStudentsQuery,
+  classSummaryQuery,
   createStudent,
   updateStudent,
   syncAttempts,
