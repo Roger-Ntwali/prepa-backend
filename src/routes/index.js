@@ -44,6 +44,12 @@ router.get('/past-papers/:id/download-url', requireAuth, v.idParam, validate, pa
 // no admin-side reset action here anymore.
 router.get('/users/pending-teachers', requireAuth, requireRole('admin'), usersController.listPendingTeachers);
 router.get('/users/teachers', requireAuth, requireRole('admin'), v.listTeachersQuery, validate, usersController.listTeachers);
+// Teacher CRUD — mirrors the student CRUD below exactly (admin-created,
+// bypasses the self-registration approval queue).
+router.post('/users/teachers', requireAuth, requireRole('admin'), v.createTeacher, validate, usersController.createTeacher);
+router.patch('/users/teachers/:id', requireAuth, requireRole('admin'), v.idParam, v.updateTeacher, validate, usersController.updateTeacher);
+router.delete('/users/teachers/:id', requireAuth, requireRole('admin'), v.idParam, validate, usersController.deleteTeacher);
+router.patch('/users/teachers/:id/restore', requireAuth, requireRole('admin'), v.idParam, validate, usersController.restoreTeacher);
 router.patch('/users/:id/approve', requireAuth, requireRole('admin'), v.idParam, validate, usersController.approveTeacher);
 router.delete('/users/:id/reject', requireAuth, requireRole('admin'), v.idParam, validate, usersController.rejectTeacher);
 // Student list/overview — admin and teacher both need this for the dashboard.

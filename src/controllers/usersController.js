@@ -15,15 +15,36 @@ async function listPendingTeachers(req, res) {
 
 // Every teacher, active or pending, for the admin's Teachers management
 // screen. Pending ones surface first -- they're the ones needing action.
+// questions_created/quizzes_created are the teacher-side parallel to a
+// student's attempts_count -- "how much has this account actually done"
+// (an authored-content count is what a teacher accumulates; taking
+// quizzes isn't something a teacher does). Archived teachers excluded,
+// same as archived students.
 async function listTeachers(req, res) {
   const { page, limit, offset } = parsePageLimit(req);
+  const { search } = req.query;
+  const params = [limit, offset];
+  let searchClause = '';
+  if (search) {
+    params.push(`%${search}%`);
+    searchClause = `AND (u.full_name ILIKE $${params.length} OR u.email ILIKE $${params.length})`;
+  }
+
   const { rows } = await pool.query(
-    `SELECT id, full_name, email, username, is_active, created_at,
-            COUNT(*) OVER()::int AS total_count
-     FROM users WHERE role = 'teacher'
-     ORDER BY is_active ASC, created_at DESC
+    `SELECT
+       u.id, u.full_name, u.email, u.is_active, u.created_at,
+       COUNT(DISTINCT q.id)::int AS questions_created,
+       COUNT(DISTINCT qz.id)::int AS quizzes_created,
+       COUNT(*) OVER()::int AS total_count
+     FROM users u
+     LEFT JOIN questions q ON q.created_by = u.id
+     LEFT JOIN quizzes qz ON qz.created_by = u.id
+     WHERE u.role = 'teacher' AND u.archived_at IS NULL
+     ${searchClause}
+     GROUP BY u.id
+     ORDER BY u.is_active ASC, u.created_at DESC
      LIMIT $1 OFFSET $2`,
-    [limit, offset]
+    params
   );
   const total = rows[0]?.total_count ?? 0;
   res.json({
@@ -207,7 +228,105 @@ async function restoreStudent(req, res) {
   res.json({ id, action: 'restored', message: 'Student restored.' });
 }
 
+// Admin creates a teacher account directly, bypassing the self-registration
+// approval queue -- the admin vouching for them here IS the approval, same
+// as how register() already treats an admin-created account as active
+// immediately. Same temp-password pattern as createStudent.
+async function createTeacher(req, res) {
+  const { full_name, email } = req.body;
+  const tempPassword = crypto.randomBytes(9).toString('base64url');
+
+  try {
+    const password_hash = await bcrypt.hash(tempPassword, 10);
+    const { rows } = await pool.query(
+      `INSERT INTO users (full_name, role, email, password_hash, school_id, is_active)
+       VALUES ($1, 'teacher', $2, $3, $4, true)
+       RETURNING id, full_name, email, is_active, created_at`,
+      [full_name, email, password_hash, req.user.school_id || null]
+    );
+    res.status(201).json({ user: rows[0], temp_password: tempPassword });
+  } catch (err) {
+    if (err.code === '23505') {
+      return res.status(409).json({ error: 'Email already in use' });
+    }
+    console.error(err);
+    res.status(500).json({ error: 'Failed to create teacher' });
+  }
+}
+
+async function updateTeacher(req, res) {
+  const { id } = req.params;
+  const { full_name, email } = req.body;
+
+  try {
+    const { rows } = await pool.query(
+      `UPDATE users SET full_name = $1, email = $2
+       WHERE id = $3 AND role = 'teacher'
+       RETURNING id, full_name, email, is_active, created_at`,
+      [full_name, email, id]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Teacher not found' });
+    res.json({ user: rows[0] });
+  } catch (err) {
+    if (err.code === '23505') {
+      return res.status(409).json({ error: 'Email already in use' });
+    }
+    console.error(err);
+    res.status(500).json({ error: 'Failed to update teacher' });
+  }
+}
+
+// questions.created_by/quizzes.created_by/past_papers.uploaded_by all
+// reference users(id) with no ON DELETE clause (defaults to RESTRICT), so
+// hard-deleting a teacher who has authored anything would fail outright
+// with a foreign key violation, not fail gracefully. Archive instead when
+// they've authored content; otherwise there's nothing a hard delete would
+// orphan.
+async function deleteTeacher(req, res) {
+  const { id } = req.params;
+
+  const existing = await pool.query(
+    `SELECT id FROM users WHERE id = $1 AND role = 'teacher'`,
+    [id]
+  );
+  if (!existing.rows.length) {
+    return res.status(404).json({ error: 'Teacher not found' });
+  }
+
+  const authored = await pool.query(
+    `SELECT
+       EXISTS(SELECT 1 FROM questions WHERE created_by = $1) OR
+       EXISTS(SELECT 1 FROM quizzes WHERE created_by = $1) OR
+       EXISTS(SELECT 1 FROM past_papers WHERE uploaded_by = $1) AS has_content`,
+    [id]
+  );
+
+  if (authored.rows[0].has_content) {
+    await pool.query('UPDATE users SET archived_at = now() WHERE id = $1', [id]);
+    return res.json({
+      id,
+      action: 'archived',
+      message:
+        'This teacher has authored questions, quizzes, or past papers, so the account was archived instead of deleted. Their content stays in place, and they no longer appear in the roster or can sign in.',
+    });
+  }
+
+  await pool.query(`DELETE FROM users WHERE id = $1 AND role = 'teacher'`, [id]);
+  res.json({ id, action: 'deleted', message: 'Teacher deleted.' });
+}
+
+async function restoreTeacher(req, res) {
+  const { id } = req.params;
+  const { rows } = await pool.query(
+    `UPDATE users SET archived_at = NULL WHERE id = $1 AND role = 'teacher' RETURNING id`,
+    [id]
+  );
+  if (!rows.length) return res.status(404).json({ error: 'Teacher not found' });
+  res.json({ id, action: 'restored', message: 'Teacher restored.' });
+}
+
 module.exports = {
   listPendingTeachers, listTeachers, approveTeacher, rejectTeacher, listStudents,
   createStudent, updateStudent, deleteStudent, restoreStudent,
+  createTeacher, updateTeacher, deleteTeacher, restoreTeacher,
 };

@@ -135,7 +135,10 @@ const listQuestionsQuery = [
 const listTopicsQuery = [...paginationQuery];
 const listQuizzesQuery = [...paginationQuery];
 const listPastPapersQuery = [...paginationQuery];
-const listTeachersQuery = [...paginationQuery];
+const listTeachersQuery = [
+  query('search').optional({ values: 'falsy' }).isString().withMessage('search must be text'),
+  ...paginationQuery,
+];
 
 const listStudentsQuery = [
   query('search').optional({ values: 'falsy' }).isString().withMessage('search must be text'),
@@ -156,6 +159,13 @@ const createStudent = [
 ];
 
 const updateStudent = createStudent;
+
+const createTeacher = [
+  requiredString('full_name', 'full name'),
+  body('email').isEmail().withMessage('email must be a valid email address').normalizeEmail(),
+];
+
+const updateTeacher = createTeacher;
 
 const syncAttempts = [
   body('attempts').isArray({ min: 1 }).withMessage('attempts must be a non-empty array'),
@@ -186,5 +196,7 @@ module.exports = {
   classSummaryQuery,
   createStudent,
   updateStudent,
+  createTeacher,
+  updateTeacher,
   syncAttempts,
 };
