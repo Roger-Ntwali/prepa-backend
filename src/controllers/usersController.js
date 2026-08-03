@@ -54,25 +54,6 @@ async function rejectTeacher(req, res) {
   res.json({ ok: true });
 }
 
-// Generates a one-time 6-digit code the admin reads out (or otherwise
-// relays) to the teacher, who exchanges it -- along with their email and a
-// new password -- at POST /auth/reset-password. crypto.randomInt is used
-// rather than Math.random() since this gates account access, however
-// short-lived the code is. Scoped to role='teacher': this is teacher
-// account management, not a general admin password reset for any user.
-async function resetTeacherPassword(req, res) {
-  const code = crypto.randomInt(100000, 1000000).toString();
-  const { rows } = await pool.query(
-    `UPDATE users
-     SET reset_code = $1, reset_code_expires_at = now() + interval '15 minutes'
-     WHERE id = $2 AND role = 'teacher'
-     RETURNING id, full_name, email`,
-    [code, req.params.id]
-  );
-  if (!rows.length) return res.status(404).json({ error: 'Teacher not found' });
-  res.json({ code, expires_in_minutes: 15, teacher: rows[0] });
-}
-
 // All students, with a quick performance snapshot for the admin/teacher
 // dashboard's overview list. Archived (soft-deleted) students are excluded,
 // same as archived questions never appear in the bank.
@@ -227,7 +208,6 @@ async function restoreStudent(req, res) {
 }
 
 module.exports = {
-  listPendingTeachers, listTeachers, approveTeacher, rejectTeacher,
-  resetTeacherPassword, listStudents,
+  listPendingTeachers, listTeachers, approveTeacher, rejectTeacher, listStudents,
   createStudent, updateStudent, deleteStudent, restoreStudent,
 };

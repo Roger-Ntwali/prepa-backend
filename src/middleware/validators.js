@@ -48,6 +48,10 @@ const login = [
   body('password').notEmpty().withMessage('password is required'),
 ];
 
+const forgotPassword = [
+  body('email').isEmail().withMessage('email must be a valid email address'),
+];
+
 const useResetCode = [
   body('email').isEmail().withMessage('email must be a valid email address'),
   body('code').exists().withMessage('code is required').bail()
@@ -156,6 +160,7 @@ const syncAttempts = [
 module.exports = {
   register,
   login,
+  forgotPassword,
   useResetCode,
   createTopic,
   createQuestion,

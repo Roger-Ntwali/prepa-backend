@@ -21,6 +21,22 @@ async function verifyDatabaseConnection() {
   }
 }
 
+// RESEND_FROM_EMAIL unset means every reset-code email sends from Resend's
+// shared sandbox address (onboarding@resend.dev) -- which Resend's free
+// tier only allows delivering to the Resend account owner's own address,
+// rejecting every other recipient with a 403. Logged once at boot so this
+// is the first thing anyone sees when debugging "the reset email never
+// arrived", instead of rediscovering it from a live failure each time.
+if (!process.env.RESEND_FROM_EMAIL) {
+  console.warn(
+    'Resend free tier: RESEND_FROM_EMAIL is not set, so reset-code emails send from the shared ' +
+    'onboarding@resend.dev sandbox address. Without a verified domain, Resend only delivers this ' +
+    "to the Resend account's own email -- every other recipient gets rejected with a 403. " +
+    'Verify a domain at resend.com/domains and set RESEND_FROM_EMAIL to fix this for real ' +
+    'students.'
+  );
+}
+
 verifyDatabaseConnection().then(() => {
   app.listen(PORT, () => {
     console.log(`PREPA backend listening on port ${PORT}`);

@@ -15,7 +15,7 @@ const pastPapersController = require('../controllers/pastPapersController');
 const healthController = require('../controllers/healthController');
 const upload = require('../middleware/upload');
 const pdfImportController = require('../controllers/pdfImportController');
-const { authLimiter, aiTutorLimiter, aiAuthoringLimiter } = require('../middleware/rateLimit');
+const { authLimiter, aiTutorLimiter, aiAuthoringLimiter, forgotPasswordLimiter } = require('../middleware/rateLimit');
 const { validate } = require('../middleware/validate');
 const v = require('../middleware/validators');
 
@@ -39,12 +39,13 @@ router.post('/past-papers', requireAuth, requireRole('admin'), upload.single('fi
 router.delete('/past-papers/:id', requireAuth, requireRole('admin'), v.idParam, validate, pastPapersController.deletePastPaper);
 router.get('/past-papers/:id/download-url', requireAuth, v.idParam, validate, pastPapersController.getDownloadUrl);
 
-// User management — admin only (approve/reject/manage teacher accounts).
+// User management — admin only (approve/reject teacher accounts). Password
+// reset is self-service now (see /auth/forgot-password below), so there's
+// no admin-side reset action here anymore.
 router.get('/users/pending-teachers', requireAuth, requireRole('admin'), usersController.listPendingTeachers);
 router.get('/users/teachers', requireAuth, requireRole('admin'), v.listTeachersQuery, validate, usersController.listTeachers);
 router.patch('/users/:id/approve', requireAuth, requireRole('admin'), v.idParam, validate, usersController.approveTeacher);
 router.delete('/users/:id/reject', requireAuth, requireRole('admin'), v.idParam, validate, usersController.rejectTeacher);
-router.post('/users/:id/reset-password', requireAuth, requireRole('admin'), v.idParam, validate, usersController.resetTeacherPassword);
 // Student list/overview — admin and teacher both need this for the dashboard.
 router.get('/users/students', requireAuth, requireRole('teacher', 'admin'), v.listStudentsQuery, validate, usersController.listStudents);
 // Student CRUD — admin only, matching how teacher accounts are managed above.
@@ -60,6 +61,11 @@ router.get('/reports/students/:id', requireAuth, requireRole('teacher', 'admin')
 // Auth
 router.post('/auth/register', authLimiter, v.register, validate, authController.register);
 router.post('/auth/login', authLimiter, v.login, validate, authController.login);
+// Self-service password reset, for any role. Stricter rate limit than
+// login/register -- a hit here that matches a real account sends an
+// actual email, not just a DB lookup. See authController.forgotPassword
+// for why the response never reveals whether the email exists.
+router.post('/auth/forgot-password', forgotPasswordLimiter, v.forgotPassword, validate, authController.forgotPassword);
 // Public -- no session exists yet. Rate-limited the same as register/login,
 // the other two unauthenticated entry points, since a code is guessable in
 // principle (6 digits) even though it's short-lived and single-use.
