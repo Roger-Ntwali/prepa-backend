@@ -71,7 +71,7 @@ async function studentDetail(req, res) {
 // One grouped query replaces all of it.
 async function classSummary(req, res) {
   try {
-  const [topicRes, totalsRes, activeRes] = await Promise.all([
+  const [topicRes, totalsRes, activeRes, difficultyRes, trendRes] = await Promise.all([
     // Accuracy per topic across every student.
     pool.query(
       `SELECT
@@ -108,6 +108,24 @@ async function classSummary(req, res) {
        ORDER BY attempts_count DESC
        LIMIT 5`
     ),
+    // Question bank composition by difficulty, for the dashboard's donut
+    // chart -- e.g. a bank that's skewed too easy/hard is worth knowing.
+    pool.query(
+      `SELECT difficulty, COUNT(*)::int AS count
+       FROM questions WHERE archived_at IS NULL
+       GROUP BY difficulty`
+    ),
+    // Class average per day, last 14 days, for the trend line. Days with
+    // no completed attempts simply don't appear (a gap, not a zero) --
+    // the frontend already treats "fewer than 2 points" as "not enough
+    // data yet", same as the per-student trend chart.
+    pool.query(
+      `SELECT DATE(completed_at) AS day, ROUND(AVG(score)) AS avg_score
+       FROM quiz_attempts
+       WHERE completed_at IS NOT NULL AND completed_at >= now() - interval '14 days'
+       GROUP BY DATE(completed_at)
+       ORDER BY day ASC`
+    ),
   ]);
 
   const topics = topicRes.rows.map((t) => ({
@@ -139,6 +157,14 @@ async function classSummary(req, res) {
       full_name: r.full_name,
       attempts_count: r.attempts_count,
       avg_score: r.avg_score === null ? null : Number(r.avg_score),
+    })),
+    difficulty_mix: ['easy', 'medium', 'hard'].map((label, i) => ({
+      label,
+      count: difficultyRes.rows.find((r) => r.difficulty === i + 1)?.count || 0,
+    })),
+    score_trend: trendRes.rows.map((r) => ({
+      day: r.day,
+      avg_score: Number(r.avg_score),
     })),
   });
   } catch (err) {
