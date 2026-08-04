@@ -79,6 +79,41 @@ async function promoteToAdmin(req, res) {
   res.json({ user: rows[0] });
 }
 
+// Admins the Teachers page can offer a "Revoke admin" action for -- only
+// ones that got there via promoteToAdmin are meaningfully revocable, but
+// there's no separate flag distinguishing "promoted" from "always been
+// admin", so every admin account is listed. demoteToTeacher below is what
+// actually stops a revoke from ever leaving the platform with zero admins.
+async function listAdmins(req, res) {
+  const { rows } = await pool.query(
+    `SELECT id, full_name, email, created_at
+     FROM users
+     WHERE role = 'admin' AND archived_at IS NULL
+     ORDER BY created_at ASC`
+  );
+  res.json({ admins: rows });
+}
+
+// Reverse of promoteToAdmin. Refuses to demote the last remaining admin --
+// otherwise the platform would be left with no one able to approve
+// teachers, manage students, or promote/revoke admins at all.
+async function demoteToTeacher(req, res) {
+  const { rows: countRows } = await pool.query(
+    `SELECT COUNT(*)::int AS count FROM users WHERE role = 'admin' AND archived_at IS NULL`
+  );
+  if (countRows[0].count <= 1) {
+    return res.status(400).json({ error: 'Cannot revoke the last remaining admin.' });
+  }
+  const { rows } = await pool.query(
+    `UPDATE users SET role = 'teacher'
+     WHERE id = $1 AND role = 'admin'
+     RETURNING id, full_name, email, role`,
+    [req.params.id]
+  );
+  if (!rows.length) return res.status(404).json({ error: 'Admin not found' });
+  res.json({ user: rows[0] });
+}
+
 // Reject = permanently remove the pending account so they can re-register
 // cleanly if it was a mistake.
 async function rejectTeacher(req, res) {
@@ -348,5 +383,5 @@ module.exports = {
   listPendingTeachers, listTeachers, approveTeacher, rejectTeacher, listStudents,
   createStudent, updateStudent, deleteStudent, restoreStudent,
   createTeacher, updateTeacher, deleteTeacher, restoreTeacher,
-  promoteToAdmin,
+  promoteToAdmin, listAdmins, demoteToTeacher,
 };

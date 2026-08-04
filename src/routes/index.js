@@ -53,6 +53,8 @@ router.patch('/users/teachers/:id/restore', requireAuth, requireRole('admin'), v
 router.patch('/users/:id/approve', requireAuth, requireRole('admin'), v.idParam, validate, usersController.approveTeacher);
 router.delete('/users/:id/reject', requireAuth, requireRole('admin'), v.idParam, validate, usersController.rejectTeacher);
 router.patch('/users/:id/promote', requireAuth, requireRole('admin'), v.idParam, validate, usersController.promoteToAdmin);
+router.get('/users/admins', requireAuth, requireRole('admin'), usersController.listAdmins);
+router.patch('/users/:id/demote', requireAuth, requireRole('admin'), v.idParam, validate, usersController.demoteToTeacher);
 // Student list/overview — admin and teacher both need this for the dashboard.
 router.get('/users/students', requireAuth, requireRole('teacher', 'admin'), v.listStudentsQuery, validate, usersController.listStudents);
 // Student CRUD — admin only, matching how teacher accounts are managed above.
