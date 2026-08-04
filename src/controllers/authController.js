@@ -21,8 +21,14 @@ async function register(req, res) {
   const { full_name, name, role, email, username, password, school_id, class_level, level } = req.body;
   const fullName = full_name || name;
   const classLevel = class_level || level;
+  // Normalized so "Jane@Example.com" and "jane@example.com" collide as the
+  // same signup instead of silently creating two accounts -- the
+  // users_email_lower_key index (006_email_case_insensitive.sql) enforces
+  // this at the DB level too, but normalizing here keeps the stored value
+  // itself consistent for every other query that reads it back.
+  const normalizedEmail = email ? email.trim().toLowerCase() : null;
 
-  if (!fullName || !role || !password || (!email && !username)) {
+  if (!fullName || !role || !password || (!normalizedEmail && !username)) {
     return res.status(400).json({ error: 'name, role, password, and email or username are required' });
   }
   if (!['student', 'teacher', 'admin'].includes(role)) {
@@ -38,7 +44,7 @@ async function register(req, res) {
       `INSERT INTO users (full_name, role, email, username, password_hash, school_id, class_level, is_active)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        RETURNING id, full_name, role, email, username, school_id, class_level, is_active, created_at`,
-      [fullName, role, email || null, username || null, password_hash, school_id || null, classLevel || null, isActive]
+      [fullName, role, normalizedEmail, username || null, password_hash, school_id || null, classLevel || null, isActive]
     );
     const user = rows[0];
     if (!user.is_active) {
@@ -49,7 +55,7 @@ async function register(req, res) {
     res.status(201).json({ user, token });
   } catch (err) {
     if (err.code === '23505') {
-      return res.status(409).json({ error: 'Email or username already in use' });
+      return res.status(409).json({ error: 'That email or username already has an account. Try logging in instead.' });
     }
     console.error(err);
     res.status(500).json({ error: 'Registration failed' });
@@ -68,7 +74,7 @@ async function login(req, res) {
 
   try {
     const { rows } = await pool.query(
-      `SELECT * FROM users WHERE (email = $1 OR username = $1)`,
+      `SELECT * FROM users WHERE (LOWER(email) = LOWER($1) OR username = $1)`,
       [loginId]
     );
     const user = rows[0];
@@ -103,7 +109,7 @@ async function login(req, res) {
 async function forgotPassword(req, res) {
   const { email } = req.body;
   try {
-    const { rows } = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
+    const { rows } = await pool.query('SELECT id FROM users WHERE LOWER(email) = LOWER($1)', [email]);
     const user = rows[0];
     if (user) {
       const code = crypto.randomInt(100000, 1000000).toString();
@@ -133,7 +139,7 @@ async function resetPasswordWithCode(req, res) {
   try {
     const { rows } = await pool.query(
       `SELECT id FROM users
-       WHERE email = $1 AND reset_code = $2 AND reset_code_expires_at > now()`,
+       WHERE LOWER(email) = LOWER($1) AND reset_code = $2 AND reset_code_expires_at > now()`,
       [email, code]
     );
     const user = rows[0];

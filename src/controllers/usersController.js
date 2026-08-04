@@ -157,6 +157,7 @@ async function listStudents(req, res) {
 // later via the same forgot-password flow any user uses.
 async function createStudent(req, res) {
   const { full_name, email, class_level } = req.body;
+  const normalizedEmail = email ? email.trim().toLowerCase() : null;
   const tempPassword = crypto.randomBytes(9).toString('base64url');
 
   try {
@@ -165,7 +166,7 @@ async function createStudent(req, res) {
       `INSERT INTO users (full_name, role, email, password_hash, school_id, class_level, is_active)
        VALUES ($1, 'student', $2, $3, $4, $5, true)
        RETURNING id, full_name, email, class_level, is_active, created_at`,
-      [full_name, email, password_hash, req.user.school_id || null, class_level || null]
+      [full_name, normalizedEmail, password_hash, req.user.school_id || null, class_level || null]
     );
     res.status(201).json({ user: rows[0], temp_password: tempPassword });
   } catch (err) {
@@ -180,13 +181,14 @@ async function createStudent(req, res) {
 async function updateStudent(req, res) {
   const { id } = req.params;
   const { full_name, email, class_level } = req.body;
+  const normalizedEmail = email ? email.trim().toLowerCase() : null;
 
   try {
     const { rows } = await pool.query(
       `UPDATE users SET full_name = $1, email = $2, class_level = $3
        WHERE id = $4 AND role = 'student'
        RETURNING id, full_name, email, class_level, is_active, created_at`,
-      [full_name, email, class_level || null, id]
+      [full_name, normalizedEmail, class_level || null, id]
     );
     if (!rows.length) return res.status(404).json({ error: 'Student not found' });
     res.json({ user: rows[0] });
@@ -249,6 +251,7 @@ async function restoreStudent(req, res) {
 // immediately. Same temp-password pattern as createStudent.
 async function createTeacher(req, res) {
   const { full_name, email } = req.body;
+  const normalizedEmail = email ? email.trim().toLowerCase() : null;
   const tempPassword = crypto.randomBytes(9).toString('base64url');
 
   try {
@@ -257,7 +260,7 @@ async function createTeacher(req, res) {
       `INSERT INTO users (full_name, role, email, password_hash, school_id, is_active)
        VALUES ($1, 'teacher', $2, $3, $4, true)
        RETURNING id, full_name, email, is_active, created_at`,
-      [full_name, email, password_hash, req.user.school_id || null]
+      [full_name, normalizedEmail, password_hash, req.user.school_id || null]
     );
     res.status(201).json({ user: rows[0], temp_password: tempPassword });
   } catch (err) {
@@ -272,13 +275,14 @@ async function createTeacher(req, res) {
 async function updateTeacher(req, res) {
   const { id } = req.params;
   const { full_name, email } = req.body;
+  const normalizedEmail = email ? email.trim().toLowerCase() : null;
 
   try {
     const { rows } = await pool.query(
       `UPDATE users SET full_name = $1, email = $2
        WHERE id = $3 AND role = 'teacher'
        RETURNING id, full_name, email, is_active, created_at`,
-      [full_name, email, id]
+      [full_name, normalizedEmail, id]
     );
     if (!rows.length) return res.status(404).json({ error: 'Teacher not found' });
     res.json({ user: rows[0] });

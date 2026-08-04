@@ -14,6 +14,7 @@
 const pool = require('../config/db');
 const { callGemini } = require('../utils/gemini');
 const { saveUploadedPdf } = require('../utils/savedUpload');
+const { findDuplicateQuestion } = require('../utils/questionDuplicate');
 
 function buildPrompt(topics) {
   const topicList = topics.map((t) => `- "${t.title}"`).join('\n');
@@ -135,11 +136,11 @@ async function importPdf(req, res) {
         continue;
       }
 
-      const { rows: existing } = await pool.query(
-        `SELECT id FROM questions WHERE topic_id = $1 AND question_text = $2 LIMIT 1`,
-        [topicId, q.question_text]
-      );
-      if (existing.length) {
+      // Same normalized (case/whitespace-insensitive) check used by
+      // createQuestion/updateQuestion, and not scoped to this one topic --
+      // a duplicate that got misclassified into a different topic is
+      // still a duplicate.
+      if (await findDuplicateQuestion(q.question_text)) {
         skippedDuplicate++;
         continue;
       }

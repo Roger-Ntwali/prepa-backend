@@ -2,6 +2,7 @@ const pool = require('../config/db');
 const { toAppShape } = require('../utils/questionShape');
 const { callGemini } = require('../utils/gemini');
 const { parsePageLimit } = require('../utils/pagination');
+const { findDuplicateQuestion } = require('../utils/questionDuplicate');
 
 // Given just a question (and optionally its topic), asks Gemini to draft
 // 4 plausible MCQ options, the correct one, and a short explanation — the
@@ -163,6 +164,32 @@ async function restoreQuestion(req, res) {
   res.json({ id, action: 'restored', message: 'Question restored to the bank.' });
 }
 
+// Gemini decides whether a submitted question is genuinely Biology --
+// catches an off-topic or nonsense submission before it reaches students.
+// Fails OPEN (treats the question as on-topic) on any infrastructure
+// problem (missing API key, network error, an unparseable reply) rather
+// than blocking a teacher's real work because the classifier itself is
+// unavailable -- the point is to catch clearly wrong content, not to make
+// every save depend on a third-party API being up.
+async function isOnTopicForBiology(questionText) {
+  try {
+    const reply = await callGemini(
+      `You are screening submissions for an O-Level (Rwanda REB curriculum) Biology exam-prep question bank.
+
+Question: "${questionText}"
+
+Is this a genuine Biology question appropriate for O-Level Biology students? Reply with exactly one word: YES or NO.`,
+      { maxOutputTokens: 10, temperature: 0 }
+    );
+    const answer = reply.trim().toUpperCase();
+    if (answer.startsWith('NO')) return false;
+    return true;
+  } catch (err) {
+    console.error('[isOnTopicForBiology] classification failed, allowing question through:', err.message);
+    return true;
+  }
+}
+
 async function createQuestion(req, res) {
   const {
     topic_id, past_paper_id, question_text, question_type,
@@ -171,6 +198,19 @@ async function createQuestion(req, res) {
 
   if (!question_text || !correct_answer) {
     return res.status(400).json({ error: 'question_text and correct_answer are required' });
+  }
+
+  const dupId = await findDuplicateQuestion(question_text);
+  if (dupId) {
+    return res.status(409).json({
+      error: 'This question already exists in the bank.',
+      duplicate_question_id: dupId,
+    });
+  }
+  if (!(await isOnTopicForBiology(question_text))) {
+    return res.status(400).json({
+      error: "This doesn't look like a Biology question. Only Biology content belongs in this bank -- rephrase it or check it's the right subject.",
+    });
   }
 
   try {
@@ -256,6 +296,23 @@ async function updateQuestion(req, res) {
   const existingRes = await pool.query('SELECT * FROM questions WHERE id = $1', [id]);
   if (!existingRes.rows.length) return res.status(404).json({ error: 'Question not found' });
   const existing = existingRes.rows[0];
+
+  // Only worth checking when the wording actually changed -- re-submitting
+  // the same text can't newly duplicate itself or newly go off-topic.
+  if (question_text !== existing.question_text) {
+    const dupId = await findDuplicateQuestion(question_text, id);
+    if (dupId) {
+      return res.status(409).json({
+        error: 'This question already exists in the bank.',
+        duplicate_question_id: dupId,
+      });
+    }
+    if (!(await isOnTopicForBiology(question_text))) {
+      return res.status(400).json({
+        error: "This doesn't look like a Biology question. Only Biology content belongs in this bank -- rephrase it or check it's the right subject.",
+      });
+    }
+  }
 
   const answerChanged =
     !optionsEqual(options, existing.options) || correct_answer !== existing.correct_answer;
