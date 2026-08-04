@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 
-const { requireAuth, requireRole } = require('../middleware/auth');
+const { requireAuth, requireRole, requireSuperAdmin } = require('../middleware/auth');
 const authController = require('../controllers/authController');
 const topicsController = require('../controllers/topicsController');
 const questionsController = require('../controllers/questionsController');
@@ -52,9 +52,9 @@ router.delete('/users/teachers/:id', requireAuth, requireRole('admin'), v.idPara
 router.patch('/users/teachers/:id/restore', requireAuth, requireRole('admin'), v.idParam, validate, usersController.restoreTeacher);
 router.patch('/users/:id/approve', requireAuth, requireRole('admin'), v.idParam, validate, usersController.approveTeacher);
 router.delete('/users/:id/reject', requireAuth, requireRole('admin'), v.idParam, validate, usersController.rejectTeacher);
-router.patch('/users/:id/promote', requireAuth, requireRole('admin'), v.idParam, validate, usersController.promoteToAdmin);
-router.get('/users/admins', requireAuth, requireRole('admin'), usersController.listAdmins);
-router.patch('/users/:id/demote', requireAuth, requireRole('admin'), v.idParam, validate, usersController.demoteToTeacher);
+router.patch('/users/:id/promote', requireAuth, requireSuperAdmin, v.idParam, validate, usersController.promoteToAdmin);
+router.get('/users/admins', requireAuth, requireSuperAdmin, usersController.listAdmins);
+router.patch('/users/:id/demote', requireAuth, requireSuperAdmin, v.idParam, validate, usersController.demoteToTeacher);
 // Student list/overview — admin and teacher both need this for the dashboard.
 router.get('/users/students', requireAuth, requireRole('teacher', 'admin'), v.listStudentsQuery, validate, usersController.listStudents);
 // Student CRUD — admin only, matching how teacher accounts are managed above.

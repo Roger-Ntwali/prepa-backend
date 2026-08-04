@@ -6,7 +6,7 @@ const { sendResetCodeEmail } = require('../utils/mailer');
 
 function signToken(user) {
   return jwt.sign(
-    { id: user.id, role: user.role, school_id: user.school_id },
+    { id: user.id, role: user.role, school_id: user.school_id, is_super_admin: !!user.is_super_admin },
     process.env.JWT_SECRET,
     { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
   );
@@ -43,7 +43,7 @@ async function register(req, res) {
     const { rows } = await pool.query(
       `INSERT INTO users (full_name, role, email, username, password_hash, school_id, class_level, is_active)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-       RETURNING id, full_name, role, email, username, school_id, class_level, is_active, created_at`,
+       RETURNING id, full_name, role, email, username, school_id, class_level, is_active, is_super_admin, created_at`,
       [fullName, role, normalizedEmail, username || null, password_hash, school_id || null, classLevel || null, isActive]
     );
     const user = rows[0];

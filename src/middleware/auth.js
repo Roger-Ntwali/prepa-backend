@@ -24,4 +24,15 @@ function requireRole(...roles) {
   };
 }
 
-module.exports = { requireAuth, requireRole };
+// Stricter than requireRole('admin'): granting/revoking admin access is
+// reserved for the one designated super admin, so a promoted admin can't
+// promote further admins or revoke anyone -- including revoking the super
+// admin themselves, which would have locked the platform out entirely.
+function requireSuperAdmin(req, res, next) {
+  if (!req.user || !req.user.is_super_admin) {
+    return res.status(403).json({ error: 'Only the super admin can do this' });
+  }
+  next();
+}
+
+module.exports = { requireAuth, requireRole, requireSuperAdmin };

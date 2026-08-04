@@ -86,17 +86,18 @@ async function promoteToAdmin(req, res) {
 // actually stops a revoke from ever leaving the platform with zero admins.
 async function listAdmins(req, res) {
   const { rows } = await pool.query(
-    `SELECT id, full_name, email, created_at
+    `SELECT id, full_name, email, is_super_admin, created_at
      FROM users
      WHERE role = 'admin' AND archived_at IS NULL
-     ORDER BY created_at ASC`
+     ORDER BY is_super_admin DESC, created_at ASC`
   );
   res.json({ admins: rows });
 }
 
-// Reverse of promoteToAdmin. Refuses to demote the last remaining admin --
-// otherwise the platform would be left with no one able to approve
-// teachers, manage students, or promote/revoke admins at all.
+// Reverse of promoteToAdmin. Refuses to demote the super admin -- that
+// account is what grants/revokes everyone else's admin access, so revoking
+// it would have no one left who could undo the mistake -- and refuses to
+// demote the last remaining admin for the same reason.
 async function demoteToTeacher(req, res) {
   const { rows: countRows } = await pool.query(
     `SELECT COUNT(*)::int AS count FROM users WHERE role = 'admin' AND archived_at IS NULL`
@@ -106,11 +107,17 @@ async function demoteToTeacher(req, res) {
   }
   const { rows } = await pool.query(
     `UPDATE users SET role = 'teacher'
-     WHERE id = $1 AND role = 'admin'
+     WHERE id = $1 AND role = 'admin' AND is_super_admin = false
      RETURNING id, full_name, email, role`,
     [req.params.id]
   );
-  if (!rows.length) return res.status(404).json({ error: 'Admin not found' });
+  if (!rows.length) {
+    const { rows: superCheck } = await pool.query('SELECT is_super_admin FROM users WHERE id = $1', [req.params.id]);
+    if (superCheck[0]?.is_super_admin) {
+      return res.status(403).json({ error: 'The super admin cannot be revoked.' });
+    }
+    return res.status(404).json({ error: 'Admin not found' });
+  }
   res.json({ user: rows[0] });
 }
 
