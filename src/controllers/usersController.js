@@ -64,6 +64,21 @@ async function approveTeacher(req, res) {
   res.json({ user: rows[0] });
 }
 
+// One-way promotion: teacher -> admin. Scoped to role='teacher' so this
+// can't be pointed at a student, and can't be run twice on an
+// already-promoted account (a second call just 404s instead of being a
+// harmless no-op, which is the safer failure mode for a privilege change).
+async function promoteToAdmin(req, res) {
+  const { rows } = await pool.query(
+    `UPDATE users SET role = 'admin'
+     WHERE id = $1 AND role = 'teacher'
+     RETURNING id, full_name, email, role`,
+    [req.params.id]
+  );
+  if (!rows.length) return res.status(404).json({ error: 'Teacher not found' });
+  res.json({ user: rows[0] });
+}
+
 // Reject = permanently remove the pending account so they can re-register
 // cleanly if it was a mistake.
 async function rejectTeacher(req, res) {
@@ -329,4 +344,5 @@ module.exports = {
   listPendingTeachers, listTeachers, approveTeacher, rejectTeacher, listStudents,
   createStudent, updateStudent, deleteStudent, restoreStudent,
   createTeacher, updateTeacher, deleteTeacher, restoreTeacher,
+  promoteToAdmin,
 };
