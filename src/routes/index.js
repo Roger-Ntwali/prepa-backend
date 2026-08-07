@@ -66,6 +66,7 @@ router.patch('/users/students/:id/restore', requireAuth, requireRole('admin'), v
 // Reports — per-student performance detail, for admin + teacher dashboard.
 router.get('/reports/class-summary', requireAuth, requireRole('teacher', 'admin'), v.classSummaryQuery, validate, reportsController.classSummary);
 router.get('/reports/students/:id', requireAuth, requireRole('teacher', 'admin'), v.idParam, validate, reportsController.studentDetail);
+router.get('/reports/quizzes/:id', requireAuth, requireRole('teacher', 'admin'), v.idParam, validate, reportsController.quizPerformance);
 
 // Auth
 router.post('/auth/register', authLimiter, v.register, validate, authController.register);

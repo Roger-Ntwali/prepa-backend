@@ -239,4 +239,48 @@ async function classSummary(req, res) {
   }
 }
 
-module.exports = { studentDetail, classSummary };
+// Per-quiz detail: every student's result on this one quiz, for the
+// teacher/admin "how did the class do on this specific quiz" view. Mirrors
+// studentDetail's shape (one query for the quiz itself, one for the list
+// of results) but the other way around -- one quiz, many students, instead
+// of one student, many quizzes.
+async function quizPerformance(req, res) {
+  const { id } = req.params;
+
+  try {
+    const [quizRes, resultsRes] = await Promise.all([
+      pool.query('SELECT id, title FROM quizzes WHERE id = $1', [id]),
+      pool.query(
+        `SELECT qa.id, u.id AS student_id, u.full_name, u.class_level,
+                qa.score, qa.status, qa.completed_at
+         FROM quiz_attempts qa
+         JOIN users u ON u.id = qa.student_id
+         WHERE qa.quiz_id = $1 AND qa.completed_at IS NOT NULL
+         ORDER BY qa.completed_at DESC`,
+        [id]
+      ),
+    ]);
+
+    if (!quizRes.rows.length) return res.status(404).json({ error: 'Quiz not found' });
+
+    // Scored (non-forfeited) attempts only -- a forfeited 0 is a
+    // procedural penalty, not a performance data point, same reasoning as
+    // excluding it from the portal's per-student score trend chart.
+    const scored = resultsRes.rows.filter((r) => r.status !== 'forfeited');
+    const average = scored.length
+      ? Math.round(scored.reduce((sum, r) => sum + Number(r.score), 0) / scored.length)
+      : null;
+
+    res.json({
+      quiz: quizRes.rows[0],
+      results: resultsRes.rows,
+      average_score: average,
+      attempted_count: resultsRes.rows.length,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to load quiz performance' });
+  }
+}
+
+module.exports = { studentDetail, classSummary, quizPerformance };
