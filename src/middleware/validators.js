@@ -129,6 +129,7 @@ const listQuestionsQuery = [
   query('topic_id').optional({ values: 'falsy' }).isUUID().withMessage('topic_id must be a valid id'),
   query('past_paper_id').optional({ values: 'falsy' }).isUUID().withMessage('past_paper_id must be a valid id'),
   query('search').optional({ values: 'falsy' }).isString().withMessage('search must be text'),
+  query('difficulty').optional({ values: 'falsy' }).isInt({ min: 1, max: 3 }).withMessage('difficulty must be 1, 2, or 3'),
   ...paginationQuery,
 ];
 

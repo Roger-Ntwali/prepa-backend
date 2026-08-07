@@ -55,7 +55,7 @@ Keep options short, plausible, and at O-Level difficulty. Make exactly one optio
 }
 
 async function listQuestions(req, res) {
-  const { topic_id, past_paper_id, include_archived, page, search } = req.query;
+  const { topic_id, past_paper_id, include_archived, page, search, difficulty } = req.query;
   const params = [];
   // Archived questions stay out of every listing unless explicitly asked
   // for, so the student app and the portal never serve a retired question.
@@ -65,6 +65,7 @@ async function listQuestions(req, res) {
   const clauses = include_archived === 'true' ? [] : ['q.archived_at IS NULL'];
   if (topic_id) { params.push(topic_id); clauses.push(`q.topic_id = $${params.length}`); }
   if (past_paper_id) { params.push(past_paper_id); clauses.push(`q.past_paper_id = $${params.length}`); }
+  if (difficulty) { params.push(difficulty); clauses.push(`q.difficulty = $${params.length}`); }
   // Only meaningful once paginated -- the portal's search box used to
   // filter client-side over the full bank, which silently stopped working
   // once only one page of rows was ever fetched.

@@ -26,7 +26,7 @@ async function studentDetail(req, res) {
         [id]
       ),
       pool.query(
-        `SELECT qa.id, qz.title AS quiz_title, qa.score, qa.completed_at
+        `SELECT qa.id, qz.title AS quiz_title, qa.score, qa.status, qa.completed_at
          FROM quiz_attempts qa
          LEFT JOIN quizzes qz ON qz.id = qa.quiz_id
          WHERE qa.student_id = $1 AND qa.completed_at IS NOT NULL

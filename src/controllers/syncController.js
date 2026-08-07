@@ -121,17 +121,19 @@ async function pull(req, res) {
 
 // The mobile app's SyncService calls this, not /attempts/sync -- Attempt
 // records are one answered question each (see lib/models/attempt.dart's
-// toPushJson: id, question_id, quiz_id?, student_answer, is_correct,
-// time_spent_seconds?, attempted_at), not a nested quiz-session shape.
-// This used to be a no-op stub, meaning every attempt the shipped app
-// ever pushed was silently discarded -- reports/class-summary and every
-// student's recent-attempts history were built on zero real data.
+// toPushJson: id, question_id, quiz_id?, session_id, student_answer,
+// is_correct, time_spent_seconds?, attempted_at, forfeited), not a nested
+// quiz-session shape. This used to be a no-op stub, meaning every attempt
+// the shipped app ever pushed was silently discarded -- reports/class-summary
+// and every student's recent-attempts history were built on zero real data.
 //
 // attempt_answers.attempt_id is required by the existing reports (they
 // INNER JOIN through quiz_attempts to get topic/quiz context), so pushed
-// answers are grouped by quiz_id and each group becomes one quiz_attempts
-// "sitting" -- the closest thing to a session boundary this client shape
-// has, since it sends no separate session id of its own.
+// answers are grouped into one quiz_attempts "sitting" per session_id --
+// the real, mode-agnostic session boundary the app generates once per
+// quiz-taking screen instance (practice included). Older app builds that
+// predate session_id fall back to grouping by quiz_id, matching the
+// original behavior for anyone who hasn't updated yet.
 async function push(req, res) {
   const studentId = req.user.id;
   const deviceId = req.body?.device_id || null;
@@ -144,7 +146,7 @@ async function push(req, res) {
   const groups = new Map();
   for (const a of attempts) {
     if (!a || !a.question_id) continue; // can't record an answer with no question
-    const key = a.quiz_id || '';
+    const key = a.session_id || a.quiz_id || '';
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(a);
   }
@@ -155,18 +157,49 @@ async function push(req, res) {
     await client.query('BEGIN');
 
     for (const [key, group] of groups) {
-      const quizId = key || null;
+      // quiz_id is a real per-answer field (null for practice mode);
+      // `key` is the grouping key, which is session_id for anything sent
+      // by an app build that has it, or quiz_id itself on the old fallback
+      // path -- either way it's what quiz_attempts.session_id records.
+      const quizId = group.find((a) => a.quiz_id)?.quiz_id || null;
       const times = group.map((a) => a.attempted_at).filter(Boolean).sort();
       const startedAt = times[0] || null;
       const completedAt = times[times.length - 1] || null;
 
-      const { rows: attemptRows } = await client.query(
-        `INSERT INTO quiz_attempts (quiz_id, student_id, device_id, started_at, completed_at, synced_at)
-         VALUES ($1, $2, $3, $4, $5, now())
-         RETURNING id`,
-        [quizId, studentId, deviceId, startedAt, completedAt]
-      );
-      const attemptRowId = attemptRows[0].id;
+      // A session split across two pushes (e.g. synced mid-quiz, then
+      // again after finishing) must resolve to the SAME quiz_attempts row,
+      // not a second one -- otherwise re-syncing a partially-uploaded
+      // session, or the forfeit-flag arriving in a later push than the
+      // answers it applies to, would double-count or silently miss it.
+      let attemptRowId;
+      let isExistingRow = false;
+      if (key) {
+        const { rows: existingRows } = await client.query(
+          'SELECT id FROM quiz_attempts WHERE student_id = $1 AND session_id = $2',
+          [studentId, key]
+        );
+        if (existingRows.length) {
+          attemptRowId = existingRows[0].id;
+          isExistingRow = true;
+          await client.query(
+            `UPDATE quiz_attempts SET
+               started_at = LEAST(started_at, $1::timestamptz),
+               completed_at = GREATEST(completed_at, $2::timestamptz),
+               synced_at = now()
+             WHERE id = $3`,
+            [startedAt, completedAt, attemptRowId]
+          );
+        }
+      }
+      if (!isExistingRow) {
+        const { rows: attemptRows } = await client.query(
+          `INSERT INTO quiz_attempts (quiz_id, student_id, device_id, session_id, started_at, completed_at, synced_at)
+           VALUES ($1, $2, $3, $4, $5, $6, now())
+           RETURNING id`,
+          [quizId, studentId, deviceId, key || null, startedAt, completedAt]
+        );
+        attemptRowId = attemptRows[0].id;
+      }
 
       let insertedInGroup = 0;
       for (const a of group) {
@@ -187,7 +220,7 @@ async function push(req, res) {
         insertedInGroup += rowCount;
       }
 
-      if (insertedInGroup === 0) {
+      if (!isExistingRow && insertedInGroup === 0) {
         // Every answer in this group was already stored by an earlier,
         // successful push that never got acknowledged back to the client
         // -- this "sitting" carries no new data, so drop it rather than
@@ -196,9 +229,30 @@ async function push(req, res) {
         continue;
       }
 
-      const correct = group.filter((a) => a.is_correct).length;
-      const score = Math.round((correct / group.length) * 100);
-      await client.query('UPDATE quiz_attempts SET score = $1 WHERE id = $2', [score, attemptRowId]);
+      // A forfeited session (student left the quiz screen or backgrounded
+      // the app mid-quiz, per the mobile app's own leave-detection) scores
+      // 0 regardless of what was answered -- individual attempt_answers
+      // rows above still keep each real is_correct value, since per-topic
+      // reporting should reflect actual understanding even when the
+      // session's graded score was zeroed for leaving. Score is recomputed
+      // from every answer on this attempt (not just this batch) so a
+      // session synced across multiple pushes still ends up with its true
+      // total, and "forfeited" is sticky -- once set, a later batch that
+      // doesn't repeat the flag can't un-forfeit it.
+      const forfeitedThisBatch = group.some((a) => a.forfeited === true);
+      const { rows: allAnswers } = await client.query(
+        'SELECT is_correct FROM attempt_answers WHERE attempt_id = $1',
+        [attemptRowId]
+      );
+      const correct = allAnswers.filter((r) => r.is_correct).length;
+      const score = allAnswers.length ? Math.round((correct / allAnswers.length) * 100) : 0;
+      await client.query(
+        `UPDATE quiz_attempts SET
+           score = CASE WHEN status = 'forfeited' OR $1 THEN 0 ELSE $2 END,
+           status = CASE WHEN status = 'forfeited' OR $1 THEN 'forfeited' ELSE 'completed' END
+         WHERE id = $3`,
+        [forfeitedThisBatch, score, attemptRowId]
+      );
       persisted += insertedInGroup;
     }
 
