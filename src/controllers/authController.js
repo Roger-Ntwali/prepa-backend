@@ -16,9 +16,10 @@ async function register(req, res) {
   // The app's registration form sends { name, email, password, role, level,
   // school_name }. `full_name`/`class_level` are the real column names;
   // accept both. `school_id` is a real foreign key to the schools table —
-  // the app has no way to supply a valid one yet, so school_name (a plain
-  // string) is intentionally not mapped to it to avoid a type/FK error.
-  const { full_name, name, role, email, username, password, school_id, class_level, level } = req.body;
+  // the app has no way to supply a valid one yet, so school_name is stored
+  // as its own plain-text column instead of being matched/forced into that
+  // FK (see 009_school_name.sql).
+  const { full_name, name, role, email, username, password, school_id, school_name, class_level, level } = req.body;
   const fullName = full_name || name;
   const classLevel = class_level || level;
   // Normalized so "Jane@Example.com" and "jane@example.com" collide as the
@@ -41,10 +42,10 @@ async function register(req, res) {
     // Students and admin-created accounts are active immediately.
     const isActive = role !== 'teacher';
     const { rows } = await pool.query(
-      `INSERT INTO users (full_name, role, email, username, password_hash, school_id, class_level, is_active)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-       RETURNING id, full_name, role, email, username, school_id, class_level, is_active, is_super_admin, created_at`,
-      [fullName, role, normalizedEmail, username || null, password_hash, school_id || null, classLevel || null, isActive]
+      `INSERT INTO users (full_name, role, email, username, password_hash, school_id, school_name, class_level, is_active)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       RETURNING id, full_name, role, email, username, school_id, school_name, class_level, is_active, is_super_admin, created_at`,
+      [fullName, role, normalizedEmail, username || null, password_hash, school_id || null, school_name || null, classLevel || null, isActive]
     );
     const user = rows[0];
     if (!user.is_active) {

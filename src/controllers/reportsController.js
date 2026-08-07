@@ -8,7 +8,7 @@ async function studentDetail(req, res) {
   try {
     const [studentRes, topicRes, historyRes] = await Promise.all([
       pool.query(
-        `SELECT id, full_name, username, class_level FROM users WHERE id = $1 AND role = 'student'`,
+        `SELECT id, full_name, username, class_level, school_name FROM users WHERE id = $1 AND role = 'student'`,
         [id]
       ),
       pool.query(
