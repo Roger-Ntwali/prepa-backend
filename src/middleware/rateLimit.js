@@ -1,5 +1,18 @@
 const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
 
+// Every limiter below is a no-op under the test suite. express-rate-limit's
+// store is in-memory and persists across every test in a file (jest runs
+// them --runInBand in the same process), so a file that legitimately
+// exercises a rate-limited endpoint more than a handful of times -- e.g.
+// teachers.test.js's forgot-password describe block, which calls it 6
+// times across its own tests -- eventually trips a limit meant for a real
+// abusive user, not a real one. Same "test environment behaves safely and
+// predictably" principle already applied to AI calls (env.setup.js leaves
+// GEMINI_API_KEY unset so they fail-open/503 instead of hitting a real,
+// billed API) and email (mailer.js no-ops without RESEND_API_KEY) --
+// nothing here weakens the real, production rate limits.
+const skipInTests = () => process.env.NODE_ENV === 'test';
+
 // Brute-force protection on the two unauthenticated entry points. Keyed by
 // IP (the only thing we have pre-auth). 429 with Retry-After, matching
 // express-rate-limit's default response shape.
@@ -8,6 +21,7 @@ const authLimiter = rateLimit({
   limit: 20,
   standardHeaders: true,
   legacyHeaders: false,
+  skip: skipInTests,
   message: { error: 'Too many attempts. Please wait a few minutes and try again.' },
 });
 
@@ -23,6 +37,7 @@ const aiTutorLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req) => req.user?.id || ipKeyGenerator(req.ip),
+  skip: skipInTests,
   message: { error: 'You have reached the hourly limit for AI tutor questions. Try again later.' },
 });
 
@@ -35,6 +50,7 @@ const aiAuthoringLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req) => req.user?.id || ipKeyGenerator(req.ip),
+  skip: skipInTests,
   message: { error: 'You have reached the hourly limit for AI-assisted authoring. Try again later.' },
 });
 
@@ -47,6 +63,7 @@ const forgotPasswordLimiter = rateLimit({
   limit: 5,
   standardHeaders: true,
   legacyHeaders: false,
+  skip: skipInTests,
   message: { error: 'Too many attempts. Please wait a few minutes and try again.' },
 });
 
