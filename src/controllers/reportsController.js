@@ -263,12 +263,13 @@ async function quizPerformance(req, res) {
 
     if (!quizRes.rows.length) return res.status(404).json({ error: 'Quiz not found' });
 
-    // Scored (non-forfeited) attempts only -- a forfeited 0 is a
-    // procedural penalty, not a performance data point, same reasoning as
-    // excluding it from the portal's per-student score trend chart.
-    const scored = resultsRes.rows.filter((r) => r.status !== 'forfeited');
-    const average = scored.length
-      ? Math.round(scored.reduce((sum, r) => sum + Number(r.score), 0) / scored.length)
+    // A forfeited attempt's score is now the student's real, earned score
+    // (they keep the marks for what they answered before leaving), so it
+    // counts toward the average like any other completed attempt.
+    const average = resultsRes.rows.length
+      ? Math.round(
+          resultsRes.rows.reduce((sum, r) => sum + Number(r.score), 0) / resultsRes.rows.length
+        )
       : null;
 
     res.json({

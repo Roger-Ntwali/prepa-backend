@@ -230,15 +230,15 @@ async function push(req, res) {
       }
 
       // A forfeited session (student left the quiz screen or backgrounded
-      // the app mid-quiz, per the mobile app's own leave-detection) scores
-      // 0 regardless of what was answered -- individual attempt_answers
-      // rows above still keep each real is_correct value, since per-topic
-      // reporting should reflect actual understanding even when the
-      // session's graded score was zeroed for leaving. Score is recomputed
-      // from every answer on this attempt (not just this batch) so a
-      // session synced across multiple pushes still ends up with its true
-      // total, and "forfeited" is sticky -- once set, a later batch that
-      // doesn't repeat the flag can't un-forfeit it.
+      // the app mid-quiz, per the mobile app's own leave-detection) is
+      // still scored on what was actually answered -- the student keeps
+      // the marks they earned rather than being zeroed out for leaving.
+      // `status` still records that they left early (useful for a
+      // teacher to know), it just no longer affects the score itself.
+      // Score is recomputed from every answer on this attempt (not just
+      // this batch) so a session synced across multiple pushes still ends
+      // up with its true total, and "forfeited" status is sticky -- once
+      // set, a later batch that doesn't repeat the flag can't un-forfeit it.
       const forfeitedThisBatch = group.some((a) => a.forfeited === true);
       const { rows: allAnswers } = await client.query(
         'SELECT is_correct FROM attempt_answers WHERE attempt_id = $1',
@@ -248,10 +248,10 @@ async function push(req, res) {
       const score = allAnswers.length ? Math.round((correct / allAnswers.length) * 100) : 0;
       await client.query(
         `UPDATE quiz_attempts SET
-           score = CASE WHEN status = 'forfeited' OR $1 THEN 0 ELSE $2 END,
-           status = CASE WHEN status = 'forfeited' OR $1 THEN 'forfeited' ELSE 'completed' END
+           score = $1,
+           status = CASE WHEN status = 'forfeited' OR $2 THEN 'forfeited' ELSE 'completed' END
          WHERE id = $3`,
-        [forfeitedThisBatch, score, attemptRowId]
+        [score, forfeitedThisBatch, attemptRowId]
       );
       persisted += insertedInGroup;
     }
