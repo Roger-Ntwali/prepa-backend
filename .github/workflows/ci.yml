@@ -33,7 +33,14 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # undici@8.9.0 requires Node >=22.19.0 (declared in its own
+          # package.json engines field) -- Node 20 installs it anyway (npm
+          # only warns, EBADENGINE isn't fatal by default) but crashes at
+          # require-time the moment anything touches it: `new CacheStorage`
+          # inside undici calls a webidl helper that doesn't exist before
+          # Node 22.19. This was silent locally because dev machines run a
+          # much newer Node than whatever CI pins.
+          node-version: 22
           cache: npm
 
       - run: npm ci
