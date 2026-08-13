@@ -166,12 +166,29 @@ async function listStudents(req, res) {
         COUNT(DISTINCT qa.id)::int AS attempts_count,
         ROUND(AVG(qa.score)::numeric, 1) AS avg_score,
         MAX(qa.completed_at) AS last_active,
+        latest.quiz_title AS latest_quiz_title,
+        latest.score AS latest_score,
+        latest.status AS latest_status,
+        latest.completed_at AS latest_completed_at,
         COUNT(*) OVER()::int AS total_count
       FROM users u
       LEFT JOIN quiz_attempts qa ON qa.student_id = u.id AND qa.completed_at IS NOT NULL
+      -- Most recent completed attempt only, so the list can show "last
+      -- quiz + mark" per student without an extra click into their report
+      -- -- a plain aggregate join can't also give us "the other columns
+      -- of the single newest row", hence LATERAL (Postgres's standard
+      -- top-N-per-group pattern) rather than a second GROUP BY.
+      LEFT JOIN LATERAL (
+        SELECT qz.title AS quiz_title, qa2.score, qa2.status, qa2.completed_at
+        FROM quiz_attempts qa2
+        LEFT JOIN quizzes qz ON qz.id = qa2.quiz_id
+        WHERE qa2.student_id = u.id AND qa2.completed_at IS NOT NULL
+        ORDER BY qa2.completed_at DESC
+        LIMIT 1
+      ) latest ON true
       WHERE u.role = 'student' AND u.archived_at IS NULL
       ${searchClause} ${classClause}
-      GROUP BY u.id
+      GROUP BY u.id, latest.quiz_title, latest.score, latest.status, latest.completed_at
       ${havingClause}
       ORDER BY u.full_name ASC
       LIMIT $1 OFFSET $2
