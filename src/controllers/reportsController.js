@@ -6,7 +6,7 @@ async function studentDetail(req, res) {
   const { id } = req.params;
 
   try {
-    const [studentRes, topicRes, historyRes] = await Promise.all([
+    const [studentRes, topicRes, historyRes, quizzesCompletedRes] = await Promise.all([
       pool.query(
         `SELECT id, full_name, username, class_level, school_name FROM users WHERE id = $1 AND role = 'student'`,
         [id]
@@ -34,6 +34,15 @@ async function studentDetail(req, res) {
          LIMIT 20`,
         [id]
       ),
+      // Distinct real quizzes taken -- separate from the attempt history
+      // above, which also includes practice sets (quiz_id null) and would
+      // otherwise inflate this count with those, plus is capped at 20 rows.
+      pool.query(
+        `SELECT COUNT(DISTINCT qa.quiz_id)::int AS count
+         FROM quiz_attempts qa
+         WHERE qa.student_id = $1 AND qa.completed_at IS NOT NULL AND qa.quiz_id IS NOT NULL`,
+        [id]
+      ),
     ]);
 
     if (!studentRes.rows.length) return res.status(404).json({ error: 'Student not found' });
@@ -58,6 +67,7 @@ async function studentDetail(req, res) {
       topics,
       weak_topics: weakTopics,
       recent_attempts: historyRes.rows,
+      quizzes_completed: quizzesCompletedRes.rows[0].count,
     });
   } catch (err) {
     console.error(err);
