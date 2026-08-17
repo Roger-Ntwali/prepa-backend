@@ -103,7 +103,7 @@ async function classSummary(req, res) {
   const attemptParams = [...classParams, rangeInterval];
 
   const [
-    topicRes, totalsRes, activeRes, difficultyRes, trendRes, classesRes,
+    topicRes, totalsRes, activeRes, difficultyRes, trendRes, schoolTrendRes, classesRes,
   ] = await Promise.all([
     // Accuracy per topic, scoped to the filtered class/range.
     pool.query(
@@ -190,6 +190,18 @@ async function classSummary(req, res) {
        ORDER BY day ASC`,
       classParams
     ),
+    // Same shape as the query above but never class-scoped -- the
+    // dashboard's trend chart overlays this as a "school average"
+    // comparison line whenever a class filter is active (comparing a
+    // class to itself would be pointless, so the frontend only draws it
+    // then). Always computed; it's the same cost as the query above.
+    pool.query(
+      `SELECT DATE(qa.completed_at) AS day, ROUND(AVG(qa.score)) AS avg_score
+       FROM quiz_attempts qa
+       WHERE qa.completed_at >= now() - interval '14 days'
+       GROUP BY DATE(qa.completed_at)
+       ORDER BY day ASC`
+    ),
     // Powers the class filter dropdown.
     pool.query(
       `SELECT DISTINCT class_level FROM users
@@ -239,6 +251,10 @@ async function classSummary(req, res) {
       count: difficultyRes.rows.find((r) => r.difficulty === i + 1)?.count || 0,
     })),
     score_trend: trendRes.rows.map((r) => ({
+      day: r.day,
+      avg_score: Number(r.avg_score),
+    })),
+    school_score_trend: schoolTrendRes.rows.map((r) => ({
       day: r.day,
       avg_score: Number(r.avg_score),
     })),
